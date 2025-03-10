@@ -3,34 +3,57 @@ use bevy::prelude::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(HelloPlugin)
+        .add_plugins(CameraPlugin)
+        .add_plugins(BallPlugin)
         .run();
 }
 
 #[derive(Component)]
-struct Person;
+struct CameraMarker;
+
+fn setup_camera(mut commands: Commands) {
+    commands.spawn((Camera2d::default(), CameraMarker));
+}
+
+pub struct CameraPlugin;
+
+impl Plugin for CameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, setup_camera);
+    }
+}
 
 #[derive(Component)]
-struct Name(String);
+struct Ball;
 
-fn add_people(mut commands: Commands) {
-    commands.spawn((Person, Name("Jef".to_string())));
-    commands.spawn((Person, Name("Kristen".to_string())));
-    commands.spawn((Person, Name("Irene".to_string())));
-    commands.spawn((Person, Name("Zelda".to_string())));
+fn add_ball(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let circle = meshes.add(Circle::new(50.0));
+    let color = materials.add(Color::hsl(0.0, 0.95, 0.7));
+    commands.spawn((
+        Mesh2d(circle),
+        MeshMaterial2d(color),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        Ball,
+    ));
 }
 
-fn greet_people(query: Query<&Name, With<Person>>) {
-    for name in &query {
-        println!("hello {}!", name.0);
+fn move_ball(time: Res<Time>, mut positions: Query<&mut Transform, With<Ball>>) {
+    let t = time.elapsed_secs();
+    let tau = std::f32::consts::TAU;
+    for mut transform in &mut positions {
+        transform.translation.x = 100.0 * (tau * t).sin();
     }
 }
 
-pub struct HelloPlugin;
+pub struct BallPlugin;
 
-impl Plugin for HelloPlugin {
+impl Plugin for BallPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (add_people, greet_people).chain());
+        app.add_systems(Startup, add_ball);
+        app.add_systems(Update, move_ball);
     }
 }
-

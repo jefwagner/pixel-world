@@ -1,2 +1,6 @@
 [env]
 WGPU_BACKEND = "vulkan"
+
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
+
