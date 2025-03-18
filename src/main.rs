@@ -67,6 +67,8 @@ fn add_walls(
 #[derive(Component)]
 struct Ball;
 
+const NUM_BALLS: usize = 9;
+
 fn add_balls(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -75,22 +77,30 @@ fn add_balls(
     let radius = 15.0;
     let circle = meshes.add(Circle::new(radius));
     let mut colors = vec![];
-    for i in 0..6 {
-        colors.push(materials.add(Color::hsl(i as f32 * 15.0, 0.95, 0.7)));
+    let hue_spacing: f32 = 360.0 / (NUM_BALLS as f32);
+    for i in 0..NUM_BALLS {
+        colors.push(materials.add(Color::hsl(i as f32 * hue_spacing, 0.95, 0.7)));
     }
 
     let mut i = 0;
-    for x in -1..1 {
-        for y in -1..2 {
-            commands.spawn((
-                Mesh2d(circle.clone()),
-                MeshMaterial2d(colors[i].clone()),
-                Transform::from_xyz(x as f32 * 2.5 * radius, y as f32 * 2.5 * radius, 0.0),
-                RigidBody::Dynamic,
-                Collider::circle(radius as Scalar),
-                Restitution::new(0.95).with_combine_rule(CoefficientCombine::Min),
-                Ball,
-            ));
+    let per_row = if NUM_BALLS % 2 == 0 {
+        NUM_BALLS / 2
+    } else {
+        (NUM_BALLS + 1) / 2
+    };
+    for x in 0..2 {
+        for y in 0..per_row {
+            if i < NUM_BALLS {
+                commands.spawn((
+                    Mesh2d(circle.clone()),
+                    MeshMaterial2d(colors[i].clone()),
+                    Transform::from_xyz(x as f32 * 2.5 * radius, y as f32 * 2.5 * radius, 0.0),
+                    RigidBody::Dynamic,
+                    Collider::circle(radius as Scalar),
+                    Restitution::new(0.95).with_combine_rule(CoefficientCombine::Min),
+                    Ball,
+                ));
+            }
             i += 1;
         }
     }
