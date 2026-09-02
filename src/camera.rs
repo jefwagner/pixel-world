@@ -1,11 +1,28 @@
 use bevy::prelude::*;
+use bevy::render::camera::ScalingMode;
 use bevy::window::{PrimaryWindow, Window};
 
-#[derive(Component)]
-struct CameraMarker;
+use super::SCREEN;
+// #[derive(Component)]
+// struct CameraMarker;
 
 fn setup_camera(mut commands: Commands) {
-    commands.spawn((Camera2d::default(), CameraMarker));
+    commands.spawn((
+        Camera2d,
+        Camera { ..default() },
+        OrthographicProjection {
+            scaling_mode: ScalingMode::AutoMin {
+                min_width: SCREEN.x,
+                min_height: SCREEN.y,
+            },
+            //scaling_mode: ScalingMode::Fixed {
+            //    width: 854.0,
+            //    height: 480.0,
+            //},
+            ..OrthographicProjection::default_2d()
+        },
+        // ::default(), CameraMarker
+    ));
 }
 
 pub struct CameraPlugin;
