@@ -5,7 +5,8 @@ _Rev 1 (same day): the snap→crop decomposition moved from former 6b into Step 
 the former 6b is absorbed into Step 6 (wiring only)._
 
 Learning sessions toward: an orthographic renderer that displays the pixel-art tiles
-described in the blog chapters (`../src/ch1-*.md` through `../src/ch4-*.md`).
+described in the knowledge-base fundamentals (`~/wiki/kb/`: Pixel-Math,
+Pixel-Perfect-Rendering, Camera-Snapping-and-Scrolling, View-Transitions).
 
 ## Current state
 
