@@ -26,6 +26,8 @@ tiles at a diagonal view, built up through the roadmap (see `roadmap.md`).
 - `git-askpass.sh` — supplies the repo-scoped PAT to git (see Containment)
 - `.devcontainer/` — the containment boundary; read its Dockerfile comment
   before changing any mount
+- `notes/wiki-proposals/` — dated proposals for `~/wiki/` updates, awaiting human
+  promotion; see the Wiki section
 - `notes/` — working scratch: brainstorms, plans, drafts. Volatile; freely
   edited during work. Ingested into `~/wiki/` only via the ingestion procedure
   when settled — see `~/wiki/AGENTS.md`.
@@ -150,6 +152,9 @@ properties of the environment, not promises about behaviour.
 - **One credential exists**: the repo-scoped PAT, mounted read-only. The
   `jefscad` PAT and the lab bot credential are not mounted and not reachable.
 - **No `~/.aws`, `~/.azure`, `~/.config/lab-bot`, or host tool directory.**
+- **`~/wiki/` is mounted read-only** — full read access to the knowledge base,
+  including other projects' pages, with no ability to write. Wiki updates go
+  through `notes/wiki-proposals/` and a human promotes them.
 - **`~/tools/llm-instructions/` and `~/tools/spend.py` are mounted read-only**,
   so the rules this session is operating under cannot be edited mid-session.
 - `--cap-drop=ALL` and `--security-opt=no-new-privileges:true`.
@@ -199,6 +204,10 @@ The container bounds the *filesystem* and the *credentials*. It does not bound:
 - **The agent's judgement.** A container cannot tell a good idea from a
   plausible wrong one. Keep `goal.md` narrow and its definition of done
   checkable.
+- **Writes to the repo itself** are the *only* writes that survive the
+  container. `~/wiki/` is mounted read-only and every other path lives on the
+  container's own filesystem, which is discarded when it stops — so the
+  blast radius of a bad run is precisely the contents of this branch.
 
 ## Git
 
@@ -213,14 +222,48 @@ The container bounds the *filesystem* and the *credentials*. It does not bound:
 
 ## Wiki
 
-This is a passion project and has an LLM-managed wiki at
-`~/wiki/projects/pixel-world/`, updated with committed changes. `~/wiki/kb/`
-holds the distilled fundamentals. Before ending a session that produced commits,
-check whether the wiki needs updating — full instructions in `~/wiki/AGENTS.md`.
-The wiki is a *reference*, not a write target from implementation tasks: wiki
-updates happen as their own step (wiki-sync mode), not as side-effects.
+The knowledge base at `~/wiki/` is **mounted read-only in the devcontainer**.
+Read it freely — that is the point of the mount:
 
-**`~/wiki/` is a separate repository on the personal account** — the one place
-where an agent mistake does real damage. So: never write to it while
-unsupervised (see `~/tools/llm-instructions/wiki-sync.md`), and never commit or
-push it from an implementation task in any mode.
+- `~/wiki/kb/` — the distilled fundamentals (Pixel-Math, Pixel-Perfect-Rendering,
+  Camera-Snapping-and-Scrolling, View-Transitions). Read these for the *why*
+  behind the rendering approach.
+- `~/wiki/projects/pixel-world/` — implementation specifics for this project.
+- `~/wiki/projects/<other>/` — **when a decision has cross-project
+  implications.** Architectural choices here do not exist in isolation; the
+  other passion projects and the lab experiments share vocabulary with this
+  one, and reading them is how a decision gets made consistent with the rest of
+  the estate rather than merely locally plausible.
+
+**You cannot write to `~/wiki/`, and must not try.** No edit, no create, no
+delete, no `git` command aimed at it.
+
+### Proposing an update
+
+At the end of a work chunk, if the wiki would have changed, write a **proposal**
+to `notes/wiki-proposals/YYYY-MM-DD-short-topic.md` (this directory does not
+exist yet — create it). Structure it as the change itself, not as a summary of
+your session:
+
+- the exact target paths under `~/wiki/`,
+- for each, the full new text or a precise before/after,
+- anything `~/wiki/AGENTS.md` requires that the proposal would need — new
+  inbound links, index updates, a matching edit to
+  `kb/Projects-Summary.md`, cross-links to related pages.
+
+So that promoting it is mechanical for a human, not a research project. Commit
+the proposal with the rest of the item, and point at it in the end-of-chunk
+summary.
+
+**Never promote a proposal yourself**, in any mode. Applying it is the human
+gate; producing it is your entire job. The reasoning: the wiki is the one place
+in this estate where an undetected error gets *stronger with use* rather than
+caught, because prose has no failing test and a wrong architectural claim is
+absorbed into the next session's plan and becomes more entrenched each time it
+is read. It is also the step most prone to confident synthesis error — turning
+notes into "the cleanest path through the material" is exactly where a model
+writes something fluent and wrong.
+
+**While unsupervised, do not propose either.** Note in the summary what would
+have been proposed and stop. `~/wiki/` is a separate repository on the personal
+account, and an unmonitored agent must not touch it at all.

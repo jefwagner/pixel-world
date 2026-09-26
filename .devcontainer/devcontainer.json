@@ -14,10 +14,11 @@
   "mounts": [
     "source=${localEnv:HOME}/.config/jef/pixel-world-pat,target=/home/vscode/.config/jef/pixel-world-pat,type=bind,readonly",
     "source=${localEnv:HOME}/tools/spend.py,target=/home/vscode/tools/spend.py,type=bind,readonly",
-    "source=${localEnv:HOME}/tools/llm-instructions,target=/home/vscode/tools/llm-instructions,type=bind,readonly"
+    "source=${localEnv:HOME}/tools/llm-instructions,target=/home/vscode/tools/llm-instructions,type=bind,readonly",
+    "source=${localEnv:HOME}/wiki,target=/home/vscode/wiki,type=bind,readonly"
   ],
 
-  "//mounts-why": "Three mounts, and each is deliberate. (1) the repo-scoped PAT, mounted to the same relative path it has on the host so git-askpass.sh needs no container-specific variant. NOT the ~/.config/jef directory — that would also expose the jefscad PAT once it exists. (2) and (3) the shared instruction files, read-only so the agent cannot edit the rules it is operating under. NOT ~/.ssh (the personal key reaches every repo on the account, including the wiki), NOT ~/.config/lab-bot (the bot credential), NOT ~/.aws or ~/.azure, NOT the host tool directory, NOT the docker socket (this repo builds nothing locally — its images, if any, are not its business).",
+  "//mounts-why": "Four mounts, and each is deliberate. (1) the repo-scoped PAT, mounted to the same relative path it has on the host so git-askpass.sh needs no container-specific variant. NOT the ~/.config/jef directory — that would also expose the jefscad PAT once it exists. (2) and (3) the shared instruction files, read-only so the agent cannot edit the rules it is operating under. (4) the wiki, read-only: the agent reads the distilled kb fundamentals, this project's implementation pages, and other projects' pages when a decision has cross-project implications — but cannot write, because the wiki is the one tier where an undetected error compounds instead of being caught. Proposals go to notes/wiki-proposals/ and a human promotes them (see wiki-sync.md). NOT ~/.ssh (the personal key reaches every repo on the account, including the wiki), NOT ~/.config/lab-bot (the bot credential), NOT ~/.aws or ~/.azure, NOT the host tool directory, NOT the docker socket (this repo builds nothing locally — its images, if any, are not its business).",
 
   "runArgs": [
     "--memory=8g",
