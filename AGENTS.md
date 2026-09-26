@@ -22,32 +22,176 @@ tiles at a diagonal view, built up through the roadmap (see `roadmap.md`).
 
 - `demo.js`, `shader.wgsl`, `index.html` — the WebGPU renderer implementation
 - `roadmap.md` — the learning-session roadmap (steps, current state)
+- `README.md` — human-facing: how to run it, git workflow, agent credentials
+- `git-askpass.sh` — supplies the repo-scoped PAT to git (see Containment)
 - `notes/` — working scratch: brainstorms, plans, drafts. Volatile; freely
   edited during work. Ingested into `~/wiki/` only via the ingestion procedure
   when settled — see `~/wiki/AGENTS.md`.
 
 ## Modes of work
 
-Mode switches are explicit — say "plan" or "implement" to change modes.
+Mode switches are explicit — say "pair", "tdd", or "unsupervised" to change modes.
+The default, when no mode is stated, is **pair**.
 
-- **Planning mode**: read `~/tools/llm-instructions/planning.md` before
-  starting. Produces 1–4 one-commit-sized items in `todo.md` and triages
-  `backlog.md`.
-- **Implementation mode**: read `~/tools/llm-instructions/implementation.md`
-  before starting. TDD loop with hard STOP gates requiring user approval.
+Three nested loops, each with a different unit of approval:
+
+| Mode           | Unit of work              | Writes need approval? |
+|----------------|---------------------------|-----------------------|
+| `pair`         | single command/change     | yes, per command      |
+| `tdd`          | task / commit-sized item  | no                    |
+| `unsupervised` | feature / whole goal      | no                    |
+
+The nesting widens the unit of work that may be done unattended: a single command
+in pair, a task in tdd, a whole feature or goal in unsupervised. Stepping up is
+jef's call, not mine — if a task needs many writes, say so and suggest `tdd`
+rather than quietly widening the loop.
+
+This is a passion project, so the wiki *is* updated with committed work. Unlike
+the lab experiments, this repo has no devcontainer, which means parts of the
+rules below are prose rather than mechanism — see **Containment** for what that
+leaves open.
+
+### Pair mode (default)
+
+Pair-programming at the keyboard. Short back-and-forth, one or two ideas per
+interaction — no long essays presenting a pile of options. Every idea and change
+gets discussed as we go: a sentence or two saying what I'm about to do and why,
+then act. No autopilot — no multi-file refactors or multi-step plans executed
+without checking in between steps.
+
+Freely, without asking:
+
+- read files, search the repo (`rg`, `find`, `grep`), read `notes/`, `roadmap.md`
+  and the wiki
+- non-destructive inspection: `ls`, `cat`, `head`, `tail`, `wc`, `git status`,
+  `git log`, `git diff`, and the project's read-only checks — serve the directory
+  on a scratch port and look at the console
+
+Ask for explicit approval, per command, before:
+
+- writing, editing, creating, moving, or deleting any file — including `notes/`,
+  `todo.md`, `backlog.md`, and anything outside this repo
+- `git commit`, `push`, `checkout`, `reset`, `clean`, or `stash`
+- anything touching `~/wiki/`, including local writes; see the Wiki section
+- installing packages, editing config outside the repo, sending mail
+
+Approval is per command, not blanket — "yes, go ahead" for one command does not
+authorize the next. One approval covers one file: a multi-hunk edit within a
+single file is one atomic change, but two files is two approvals. Never commit
+unless asked in that same turn, even if every individual write was approved.
+
+Full rules: read `~/tools/llm-instructions/pair.md`.
+
+### TDD mode (interactive)
+
+Structured mode for larger chunks of work. Two sub-modes:
+
+- **Plan** — read `~/tools/llm-instructions/planning.md` first. Produces 1–4
+  one-commit-sized items in `todo.md` and triages `backlog.md`.
+- **Implement** — read `~/tools/llm-instructions/implementation.md` first. TDD
+  loop with hard STOP gates requiring user approval at the task level.
+
+Writes, edits, and commits are **not** gated per command here — the task-level
+STOP gates are the approval unit. Commits remain one-item-per-commit, and I still
+state intent before each task, but I don't ask before every `edit`.
+
+### Unsupervised mode
+
+For well-scoped work that jef approves up front and then leaves to run
+independently — e.g. an overnight job, or a large translation effort like
+"rewrite this in Rust + wgpu".
+
+1. **Goal stage (conversational)**: work with jef to draft `goal.md` at the repo
+   root. It must contain: the goal, constraints, a definition of done, and a
+   **spend cap in dollars** agreed during the conversation. Write `goal.md` as
+   a complete prompt — an agent with no other context should be able to do the
+   work from it alone.
+2. **Approval gate**: do not start work until jef explicitly approves `goal.md`.
+   Revise and re-submit until approved.
+3. **Isolate**: create a worktree before doing anything else —
+   `git worktree add ../pixel-world-loop -b agent/<date> dev`, and work in
+   `../pixel-world-loop`. Never work unattended in the main checkout. This is
+   not optional: it is what keeps `~/projects/pixel-world` itself untouched.
+4. **Independent work**: once approved, proceed without further check-ins. Track
+   spend against the cap with:
+   `uv run ~/tools/spend.py --cap <cap from goal.md>`
+   (the script prints session spend and exits non-zero once the cap is exceeded).
+   Check periodically as you work. It reports rather than interrupts, so treating
+   a non-zero exit as a stop signal *is* the enforcement.
+5. **Stop and report**: stop when the goal is met, the cap is exceeded, or the
+   work is blocked. Push the branch, and write a summary — what was done, what
+   was learned, current state, next steps, final spend from
+   `uv run ~/tools/spend.py` — as a file in the branch. **Not an email:** this
+   repo has no devcontainer and no `msmtp`, so there is no mail path. Note in
+   the summary what would have gone to `~/wiki/` had the session been supervised.
+
+Never merge the branch, never push to `dev` or `main`, never mark a PR ready.
+Leave the branch and stop.
+
+## Containment
+
+How access works here, and what it does and does not buy.
+
+### Credentials
+
+Agent sessions push as **`jefwagner` using a fine-grained PAT scoped to this
+repository only** — never the personal SSH key. The token cannot reach
+`~/wiki` or any other repo, and that is enforced by GitHub rather than by my
+good intentions. Setup and the full permission list are in
+`~/tools/llm-instructions/pat-setup.md`.
+
+Required before the first push in a session:
+
+```bash
+export GIT_ASKPASS="$PWD/git-askpass.sh"
+export GIT_TERMINAL_PROMPT=0
+```
+
+`git-askpass.sh` reads the token from `~/.config/jef/pixel-world-pat` (mode 600,
+outside the repo). The script is tracked; the secret never is. If a git command
+prompts interactively, the credentials are not set up — stop and say so rather
+than falling back to SSH, which would silently use the personal key.
+
+### Branches
+
+- `dev` is active, `main` is release, `abandoned` is the retired Bevy
+  prototype. **Never touch `abandoned`.**
+- `dev` and `main` reject force-pushes and require a pull request. That binds
+  jef too — nothing lands on `dev` without a PR, from either of us.
+- All agent work goes on `agent/<short-desc>` branches. Never commit to `dev`.
+- Prefer a worktree for anything unattended (see Unsupervised mode, step 3).
+
+### What this does not protect against
+
+Stated plainly so it is not over-trusted: there is **no devcontainer here**.
+The PAT bounds *pushes*, not writes. An agent on the host can still write local
+files into `~/wiki/`, into this repo, or elsewhere in `$HOME` — the rules above
+stop that by instruction, not by mechanism. The write-side containment the lab
+experiments get from read-only mounts and dropped capabilities is **not**
+present here. Treat these rules as best-effort, and prefer a worktree plus a
+narrow `goal.md` over trusting the rules alone.
 
 ## Git
 
-- Git-flow layout: `dev` is the active branch, `main` holds releases. Solo
-  dev — no feature branches.
-- Commit identity is personal; two-level commit messages (short summary line +
-  explanatory body).
-- History note: the original Bevy/WASM prototype lives on the `abandoned`
-  branch of this repo.
+- Remote is the private repo `jefwagner/pixel-world`; pushes use the agent PAT
+  (see Containment), not the personal SSH key.
+- Commit identity is from the user. Commit style: short summary line + longer
+  body.
+- Git-flow: `dev` active, `main` holds releases. Solo dev — the only branches
+  beyond that are the `agent/*` work branches above.
+- History note: the original Bevy/WASM prototype lives on `abandoned`; it is
+  also why `dev` had lost its `.gitignore` (restored alongside these changes).
 
 ## Wiki
 
-This is a passion project: it has an LLM-managed wiki at
-`~/wiki/projects/pixel-world/`, updated with committed changes. Before ending a
-session that produced commits, check whether the wiki needs updating — full
-instructions in `~/wiki/AGENTS.md`.
+This is a passion project and has an LLM-managed wiki at
+`~/wiki/projects/pixel-world/`, updated with committed changes. `~/wiki/kb/`
+holds the distilled fundamentals. Before ending a session that produced commits,
+check whether the wiki needs updating — full instructions in `~/wiki/AGENTS.md`.
+The wiki is a *reference*, not a write target from implementation tasks: wiki
+updates happen as their own step (wiki-sync mode), not as side-effects.
+
+**`~/wiki/` is a separate repository on the personal account** — the one place
+where an agent mistake does real damage. So: never write to it while
+unsupervised (see `~/tools/llm-instructions/wiki-sync.md`), and never commit or
+push it from an implementation task in any mode.
