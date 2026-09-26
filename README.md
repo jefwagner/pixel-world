@@ -81,39 +81,81 @@ git branch -D agent/<date>-<desc>
 This is the single most valuable safety property here. It makes an entire class
 of damage structurally impossible rather than merely discouraged.
 
+## Working inside the devcontainer
+
+**Open this repo in a devcontainer** (VS Code "Reopen in Container", or
+`devcontainer up`) and run agent sessions there. Agent sessions should happen
+inside the container, not on the host.
+
+The container is the security boundary, and it is worth knowing what it does:
+
+| Not present in the container | Why it matters |
+|---|---|
+| `~/.ssh/id_ed25519` | your personal key — reaches **every** repo you own, including the wiki |
+| `ssh`, `scp`, `sftp`, `ssh-agent`, `rsync` | with no ssh binary, git has **no SSH transport at all** and cannot fall back to the key |
+| the `jefscad` PAT, the lab bot credential | one credential only: the pixel-world PAT, mounted read-only |
+| `~/.aws`, `~/.azure`, host tool dir | — |
+| write access to `~/tools/llm-instructions/` | the agent cannot edit the rules it is working under |
+
+Plus `--cap-drop=ALL` and `--security-opt=no-new-privileges`.
+
+The practical result: **the worst realistic outcome of a bad unattended run is
+junk commits and branches inside pixel-world.** Nothing outside this repository
+is reachable from inside the container.
+
+The one thing to understand before changing anything: the `.devcontainer/`
+mount list is short *on purpose*. Every mount is a hole in the boundary. The
+reasoning is written out in comments in `.devcontainer/devcontainer.json` and
+`.devcontainer/Dockerfile` — read them before adding one.
+
 ## Agent credentials
 
-Agent sessions authenticate as **`jefwagner` using a fine-grained PAT scoped to
-this repository only** — not your SSH key. The point is that the token *cannot
-reach any other repository you own*, most importantly `~/wiki`, which is a
-separate repo holding the distilled knowledge. See
-`tools/llm-instructions/pat-setup.md` for the full procedure.
+Agent sessions push as **`jefwagner` using a fine-grained PAT scoped to this
+repository only** — never your SSH key, which the container does not have. See
+`tools/llm-instructions/pat-setup.md` for the full procedure; the token lives at
+`~/.config/jef/pixel-world-pat` (mode 600, outside the repo) and is bind-mounted
+in read-only. `jefscad` gets its own token.
 
-**One repo, one token.** `jefscad` gets its own. If a token is ever exposed,
-revoke it in GitHub settings and create a replacement — the agent cannot
-regenerate one.
+If a token is ever exposed, revoke it in GitHub settings and create a
+replacement — the agent cannot regenerate one.
 
 ## Verifying containment
 
-Worth running once after setup, and any time you doubt it. These should all
-behave as described:
+These were run against the built image and all pass. Re-run them after changing
+the devcontainer:
 
 ```bash
-# 1. the token cannot push to the wiki  ← the whole point
-cd ~/wiki && git push --dry-run            # expect: auth failure
-
-# 2. nor to an unrelated repo
-cd ~/tools/jellyfin && git push --dry-run  # expect: auth failure
-
-# 3. force-push to a protected branch is rejected by the server
-cd ~/projects/pixel-world
-git push --force-with-lease origin agent/selftest:dev   # expect: rejected
-
-# 4. a normal push to a fresh branch works
-git checkout -b agent/selftest
-git commit --allow-empty -m "selftest"
-git push -u origin agent/selftest        # expect: succeeds
-git push origin --delete agent/selftest
+devcontainer build --workspace-folder .
+docker run --rm -u vscode -e HOME=/home/vscode \
+  -v "$PWD:/workspace" \
+  -v ~/.config/jef/pixel-world-pat:/home/vscode/.config/jef/pixel-world-pat:ro \
+  -v ~/tools/spend.py:/home/vscode/tools/spend.py:ro \
+  -v ~/tools/llm-instructions:/home/vscode/tools/llm-instructions:ro \
+  -e GIT_ASKPASS=/workspace/git-askpass.sh -e GIT_TERMINAL_PROMPT=0 \
+  -e GIT_SSH_COMMAND=/bin/false \
+  $(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^vsc-pixel-world' | head -1) \
+  bash -lc 'echo "ssh: $(command -v ssh || echo ABSENT)"
+            echo "key: $(test -e ~/.ssh && echo PRESENT || echo ABSENT)"
+            echo "pat: $(ls ~/.config/jef/)"
+            echo "ro:  $(touch ~/tools/llm-instructions/CANARY 2>/dev/null && echo WRITABLE || echo read-only)"'
 ```
 
-If 1 or 2 **succeed**, the token is scoped wrongly and none of the rest holds.
+Expected: `ssh: ABSENT`, `key: ABSENT`, `pat: pixel-world-pat`, `ro: read-only`.
+
+And separately, on the host, that the token is scoped as intended — this check
+is independent of any git remote, which is what makes it trustworthy:
+
+```bash
+T=$(cat ~/.config/jef/pixel-world-pat)
+for r in pixel-world wiki; do
+  printf "%-12s " "$r"
+  curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
+    https://api.github.com/repos/jefwagner/$r
+done
+# expect: pixel-world 200, wiki 404
+```
+
+> Do **not** test this with `cd ~/wiki && git push --dry-run`. That measures
+> whatever credentials the wiki's own remote is configured with — which is your
+> SSH key, not the token — so it tests nothing about the token. This is exactly
+> the trap that made an early version of this check report a false failure.

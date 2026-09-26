@@ -22,8 +22,10 @@ tiles at a diagonal view, built up through the roadmap (see `roadmap.md`).
 
 - `demo.js`, `shader.wgsl`, `index.html` — the WebGPU renderer implementation
 - `roadmap.md` — the learning-session roadmap (steps, current state)
-- `README.md` — human-facing: how to run it, git workflow, agent credentials
+- `README.md` — human-facing: how to run it, git workflow, agent credentials, containment
 - `git-askpass.sh` — supplies the repo-scoped PAT to git (see Containment)
+- `.devcontainer/` — the containment boundary; read its Dockerfile comment
+  before changing any mount
 - `notes/` — working scratch: brainstorms, plans, drafts. Volatile; freely
   edited during work. Ingested into `~/wiki/` only via the ingestion procedure
   when settled — see `~/wiki/AGENTS.md`.
@@ -46,10 +48,9 @@ in pair, a task in tdd, a whole feature or goal in unsupervised. Stepping up is
 jef's call, not mine — if a task needs many writes, say so and suggest `tdd`
 rather than quietly widening the loop.
 
-This is a passion project, so the wiki *is* updated with committed work. Unlike
-the lab experiments, this repo has no devcontainer, which means parts of the
-rules below are prose rather than mechanism — see **Containment** for what that
-leaves open.
+This is a passion project, so the wiki *is* updated with committed work. Work
+happens inside the devcontainer, where the containment below is enforced by the
+environment rather than by good intentions — see **Containment**.
 
 ### Pair mode (default)
 
@@ -121,36 +122,61 @@ independently — e.g. an overnight job, or a large translation effort like
 5. **Stop and report**: stop when the goal is met, the cap is exceeded, or the
    work is blocked. Push the branch, and write a summary — what was done, what
    was learned, current state, next steps, final spend from
-   `uv run ~/tools/spend.py` — as a file in the branch. **Not an email:** this
-   repo has no devcontainer and no `msmtp`, so there is no mail path. Note in
-   the summary what would have gone to `~/wiki/` had the session been supervised.
+   `uv run ~/tools/spend.py` — as a file in the branch. **Not an email:** no
+   `msmtp` in this image, by design. Note in the summary what would have gone
+   to `~/wiki/` had the session been supervised.
 
 Never merge the branch, never push to `dev` or `main`, never mark a PR ready.
 Leave the branch and stop.
 
 ## Containment
 
-How access works here, and what it does and does not buy.
+**Work inside the devcontainer.** Open this repo in a devcontainer (VS Code
+"Reopen in Container", or `devcontainer up`) and do agent sessions there. The
+containment below is enforced by the container, not by this file — running a
+session on the host puts an agent on your personal SSH key and defeats all of
+it. If a session is somehow running outside the container, say so before doing
+anything else.
+
+### What the container enforces
+
+Verified by building the image and running these checks inside it. They are
+properties of the environment, not promises about behaviour.
+
+- **The personal SSH key is not present**, and no `ssh`, `scp`, `sftp`,
+  `ssh-agent`, or `rsync` binary exists. Git has no SSH transport at all, so it
+  cannot fall back to `~/.ssh/id_ed25519` — not even if the key were somehow
+  mounted, and not even if `GIT_SSH_COMMAND` were unset.
+- **One credential exists**: the repo-scoped PAT, mounted read-only. The
+  `jefscad` PAT and the lab bot credential are not mounted and not reachable.
+- **No `~/.aws`, `~/.azure`, `~/.config/lab-bot`, or host tool directory.**
+- **`~/tools/llm-instructions/` and `~/tools/spend.py` are mounted read-only**,
+  so the rules this session is operating under cannot be edited mid-session.
+- `--cap-drop=ALL` and `--security-opt=no-new-privileges:true`.
+
+Together these mean the worst realistic outcome of a bad unattended run is
+**junk commits and branches inside pixel-world**. Nothing outside this
+repository is reachable.
 
 ### Credentials
 
-Agent sessions push as **`jefwagner` using a fine-grained PAT scoped to this
-repository only** — never the personal SSH key. The token cannot reach
-`~/wiki` or any other repo, and that is enforced by GitHub rather than by my
-good intentions. Setup and the full permission list are in
-`~/tools/llm-instructions/pat-setup.md`.
+Agent sessions push as `jefwagner` with a fine-grained PAT scoped to this repo
+only. Setup and the full permission list are in
+`~/tools/llm-instructions/pat-setup.md`; the token lives at
+`~/.config/jef/pixel-world-pat` (mode 600, outside the repo), mounted into the
+container at the same relative path.
 
-Required before the first push in a session:
+`git-askpass.sh` (tracked, at the repo root) reads it at call time.
+`devcontainer.json` sets `GIT_ASKPASS`, `GIT_TERMINAL_PROMPT=0`, and
+`GIT_SSH_COMMAND=/bin/false`. If a git command prompts interactively, something
+is misconfigured — stop and say so rather than working around it.
+
+Before the first push, the remote must be HTTPS, or git will keep using a
+transport that does not exist here and the push will simply fail:
 
 ```bash
-export GIT_ASKPASS="$PWD/git-askpass.sh"
-export GIT_TERMINAL_PROMPT=0
+git remote set-url origin https://github.com/jefwagner/pixel-world.git
 ```
-
-`git-askpass.sh` reads the token from `~/.config/jef/pixel-world-pat` (mode 600,
-outside the repo). The script is tracked; the secret never is. If a git command
-prompts interactively, the credentials are not set up — stop and say so rather
-than falling back to SSH, which would silently use the personal key.
 
 ### Branches
 
@@ -161,15 +187,18 @@ than falling back to SSH, which would silently use the personal key.
 - All agent work goes on `agent/<short-desc>` branches. Never commit to `dev`.
 - Prefer a worktree for anything unattended (see Unsupervised mode, step 3).
 
-### What this does not protect against
+### Residual risk — the honest remainder
 
-Stated plainly so it is not over-trusted: there is **no devcontainer here**.
-The PAT bounds *pushes*, not writes. An agent on the host can still write local
-files into `~/wiki/`, into this repo, or elsewhere in `$HOME` — the rules above
-stop that by instruction, not by mechanism. The write-side containment the lab
-experiments get from read-only mounts and dropped capabilities is **not**
-present here. Treat these rules as best-effort, and prefer a worktree plus a
-narrow `goal.md` over trusting the rules alone.
+The container bounds the *filesystem* and the *credentials*. It does not bound:
+
+- **Spend.** `spend.py` reports and exits non-zero; nothing interrupts. The cap
+  is enforced by treating that exit code as a stop signal.
+- **Repo damage.** `reset --hard`, `rm`, and a force-push to a non-protected
+  branch are all still possible *within* this repo. That is why worktrees and
+  branch discipline exist.
+- **The agent's judgement.** A container cannot tell a good idea from a
+  plausible wrong one. Keep `goal.md` narrow and its definition of done
+  checkable.
 
 ## Git
 
