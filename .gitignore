@@ -1,0 +1,16 @@
+# build artifacts
+/target
+/dist
+/pkg
+
+# node — not currently used (this project has no build step), but the moment
+# anyone adds a package.json this keeps node_modules and lockfiles local
+node_modules/
+
+# editor / OS
+.DS_Store
+*.swp
+
+# local secrets — PATs live at ~/.config/jef/<repo>-pat, outside the repo.
+# This is a backstop, not the mechanism.
+*.pat
