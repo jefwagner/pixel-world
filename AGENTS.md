@@ -20,7 +20,12 @@ tiles at a diagonal view, built up through the roadmap (see `roadmap.md`).
 
 ## System layout
 
-- `demo.js`, `shader.wgsl`, `index.html` — the WebGPU renderer implementation
+- `www/` — the document root: the only directory that is ever served
+- `www/index.html`, `www/demo.js`, `www/shader.wgsl`, `www/color-squares.png` —
+  the WebGPU renderer implementation
+- **Never serve the repo root.** `git-askpass.sh` lives there and reads the
+  PAT; serving the root puts it, and `.git`, on the network. The only local
+  fallback is `python3 -m http.server --directory www`.
 - `roadmap.md` — the learning-session roadmap (steps, current state)
 - `README.md` — human-facing: how to run it, git workflow, agent credentials, containment
 - `git-askpass.sh` — supplies the repo-scoped PAT to git (see Containment)
@@ -67,8 +72,9 @@ Freely, without asking:
 - read files, search the repo (`rg`, `find`, `grep`), read `notes/`, `roadmap.md`
   and the wiki
 - non-destructive inspection: `ls`, `cat`, `head`, `tail`, `wc`, `git status`,
-  `git log`, `git diff`, and the project's read-only checks — serve the directory
-  on a scratch port and look at the console
+  `git log`, `git diff`, and the project's read-only checks — look at the
+  result in a browser at `https://desktop.taildd9c37.ts.net/pixelworld/`
+  (reachable from inside the devcontainer), and read the console there
 
 Ask for explicit approval, per command, before:
 

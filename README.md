@@ -10,7 +10,7 @@ where the agent needs the same rules you do.
 
 ## Current state
 
-A learning implementation: a two-stage renderer (`demo.js`) — one textured unit
+A learning implementation: a two-stage renderer (`www/demo.js`) — one textured unit
 quad at a diagonal view (phi=45), rendered into a 160×120 internal buffer and
 presented at 4× integer scale with nearest-neighbour filtering. Camera
 parameters are hardcoded in a single `cameraView` object. No render loop, no
@@ -23,11 +23,30 @@ design tensions. The design rationale is distilled in the wiki at
 ## Running it
 
 No build step — it is a static site. WebGPU needs a secure context, and
-`localhost` counts as one, so a plain file server is enough:
+every route below qualifies, so there is nothing to configure.
+
+**On the desktop** (the usual path). A single nginx instance runs in a
+docker container and does the routing for the tailnet: some projects it
+proxies to services that expose themselves on a localhost port, and the
+static ones — including this project — it serves straight from a mounted
+directory. `www/` is that mount point. The result is one stable URL per
+project:
+
+```
+https://desktop.taildd9c37.ts.net/pixelworld/
+```
+
+This is reachable from the Chromebook, so edits get validated in a real
+browser without running a server or forwarding a port. Both ends need
+Tailscale.
+
+**On a fresh clone** (any machine). No nginx, no tailnet — serve `www/`
+directly. Serve *that* directory and not the repo root, so `.git` and
+everything else stay unexposed over HTTP:
 
 ```bash
 cd ~/projects/pixel-world
-python3 -m http.server 8000
+python3 -m http.server 8000 --directory www
 # then open http://localhost:8000
 ```
 
@@ -35,11 +54,15 @@ Requires a browser with WebGPU enabled (Chrome/Edge 113+, or Safari 18+).
 
 ## Layout
 
+`www/` is the document root — it is what gets served, and nothing outside
+it is exposed over HTTP.
+
 | Path | What |
 |---|---|
-| `index.html` | page shell, canvas |
-| `demo.js` | the renderer: device setup, pipeline, camera, two-stage present |
-| `shader.wgsl` | vertex + fragment shaders |
+| `www/index.html` | page shell, canvas |
+| `www/demo.js` | the renderer: device setup, pipeline, camera, two-stage present |
+| `www/shader.wgsl` | vertex + fragment shaders |
+| `www/color-squares.png` | the texture the demo samples |
 | `roadmap.md` | learning-session roadmap and current state |
 | `todo.md` | session-scoped actionable items (1–4, one commit each) |
 | `backlog.md` | persistent idea parking lot |
