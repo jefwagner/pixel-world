@@ -10,10 +10,16 @@ Pixel-Perfect-Rendering, Camera-Snapping-and-Scrolling, View-Transitions).
 
 ## Current state
 
-Two-stage renderer (`demo.js`): one textured unit quad at a diagonal view (phi=45),
-rendered into a 160×120 internal buffer, presented at 4× integer scale (nearest).
-Camera params are hardcoded in a single `cameraView` object. No render loop, no input,
-no view switching, no UV-to-texel transform (step 6a from Ch2 not yet implemented).
+Two-stage renderer (`www/demo.js`): one textured unit quad at a diagonal view
+(phi=45), rendered into a 160×120 internal buffer, presented at 4× integer
+scale (nearest). Camera params are hardcoded in a single `cameraView` object.
+A per-frame render loop and the projection maths split out into
+`www/projection.mjs` landed alongside; see `todo.md`. No input, no view
+switching, no UV-to-texel transform (step 6a from Ch2 not yet implemented).
+
+A pixel-exact readback of the internal buffer (`window.snapshot()`) exists as
+the verification tool for every step below. Its recorded baseline is in
+`todo.md`; each step must reproduce it before it changes anything.
 
 ## How to read this roadmap
 
@@ -43,7 +49,7 @@ readback via `mapAsync` (if the inspect tool is included).
   buffers each frame. (Re-encoding per frame is fine; only GPU resource *creation*
   stays in init.)
 - Fix stale comments while in there: the vertex layout comment says "4 floats" but
-  vertices are `x,y,z + uv` (5 floats); `index.html` title still says "WebGL".
+  vertices are `x,y,z + uv` (5 floats). **Both done** — see `todo.md`.
 - **Optional half:** a `snapshotBuffer()` utility — copy the internal 160×120 texture
   to a `MAP_READ` buffer, `mapAsync`, and dump it as a PNG (or log it). This becomes
   your verification tool for *every* later step (snapping patterns, seam slivers,

@@ -34,7 +34,7 @@ first even though the refactor is the more obvious-looking work.
   ```
   `PNG export deferred — the console fingerprint is what Task 2 diffs.
 
-- [ ] **2. Refactor `main()` into named init functions + render loop**
+- [x] **2. Refactor `main()` into named init functions + render loop**
   Extract `initGPU()`, `createAssets()`, `createSceneResources()`,
   `createPresentResources()`, `renderFrame()`. Promote `cameraView` to
   mutable state. Add the `requestAnimationFrame` loop (re-encode per frame;
@@ -44,6 +44,16 @@ first even though the refactor is the more obvious-looking work.
   Includes the small structural move that makes Task 3 possible: extract
   the pure math into an importable module so Node can reach it.
   **Verify:** internal-buffer dump is pixel-identical to Task 1's.
+
+  **Verified 2026-09-27:** `(await snapshot()).hash === 'c8f95a5d'` → `true`,
+  bit-identical to the Task 1 baseline.
+
+  Implementation note: `snapshot()` is now exposed on `window` and returns
+  the summary object, so the check is one line in the console —
+  `(await snapshot()).hash === 'c8f95a5d'`. The projection maths moved to
+  `www/projection.mjs`; re-deriving the diamond from it in Node reproduces
+  `4,8,12,16,20,16,12,8,4` without a browser, which is a cheap headless
+  check that the extraction did not perturb the arithmetic.
 
 - [ ] **3. `node --test` suite for the extracted math**
   Tests for `ftz`, `matMul`, `crossVec3`, `createTranslation`,
