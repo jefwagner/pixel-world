@@ -2,11 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
+    <title>PixelWorld — WebGPU demo</title>
   </head>
 
   <body>
     <div id="demo"></div>
-    <script src="demo.js"></script>
+    <!-- type="module" is required: demo.js imports the pure pixel helpers
+         from snapshotPixels.mjs so they can be node --test'd. A classic
+         script cannot import. -->
+    <script type="module" src="demo.js"></script>
   </body>
 </html>

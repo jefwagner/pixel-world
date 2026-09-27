@@ -2,6 +2,17 @@
 //
 // I'll try to capture what's happing in notes in front of each block
 
+// The pure pixel helpers (padding, channel order, shape fingerprint) live in
+// snapshotPixels.mjs so they can be unit-tested with `node --test` without a
+// GPU. This file keeps only the WebGPU half.
+// NOTE: index.html must load this as `<script type="module">` for that import
+// to work, and whatever server serves www/ must send .mjs as JavaScript.
+import {
+  bytesPerRowAligned,
+  unpadRows,
+  summarise,
+} from './snapshotPixels.mjs';
+
 // Screen-size in pixels
 const SCREEN_WIDTH = 160;
 const SCREEN_HEIGHT = 120;
@@ -140,6 +151,60 @@ function matMul(L, R, out) {
     }
   }
   return out;
+}
+
+// Read the internal scene texture back to the CPU as tightly-packed RGBA.
+//
+// copyTextureToBuffer requires bytesPerRow to be a multiple of 256; at 160px
+// RGBA that is 768, not 640, so each row comes back with 128 bytes of padding
+// that must be stripped or the image shears diagonally.
+//
+// The caller must have already submitted the frame being read - mapAsync
+// resolves once the GPU is done, so encoding must be flushed first.
+//
+// @param {GPUDevice} device
+// @param {GPUTexture} sceneTexture   must have COPY_SRC usage
+// @param {number} width
+// @param {number} height
+// @param {string} format             the texture's format, e.g. 'bgra8unorm'
+// @returns {Promise<{width: number, height: number, format: string,
+//                    data: Uint8Array}>}
+async function snapshotBuffer(device, sceneTexture, width, height, format) {
+  const bytesPerRow = bytesPerRowAligned(width, 4);
+  const readback = device.createBuffer({
+    size: bytesPerRow * height,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  const encoder = device.createCommandEncoder();
+  encoder.copyTextureToBuffer(
+    { texture: sceneTexture },
+    { buffer: readback, bytesPerRow },
+    [width, height, 1],
+  );
+  device.queue.submit([encoder.finish()]);
+
+  await readback.mapAsync(GPUMapMode.READ);
+  const padded = new Uint8Array(readback.getMappedRange());
+  const data = unpadRows(padded, width, height, bytesPerRow);
+  readback.unmap();
+  readback.destroy();
+
+  return { width, height, format, data };
+}
+
+// Read back the current frame and print the three-layer fingerprint.
+// This is the baseline Task 2's refactor gets diffed against.
+async function reportSnapshot(device, sceneTexture, format) {
+  const snap = await snapshotBuffer(
+    device, sceneTexture, SCREEN_WIDTH, SCREEN_HEIGHT, format,
+  );
+  const s = summarise(snap);
+  console.log(
+    `[snapshot] nonBlack=${s.nonBlack}/${s.total} ` +
+    `rowWidths=${s.rowWidths} hash=${s.hash}`,
+  );
+  return s;
 }
 
 async function main() {
@@ -350,11 +415,15 @@ async function main() {
   //
   // Note: There can be no async calls between getting the canvas texture and queueing
   // the commands
+  // Note: COPY_SRC is required so snapshotBuffer() can read this texture back
+  // to the CPU. It is not a present-only target; the present pass samples it
+  // via TEXTURE_BINDING, and readback needs COPY_SRC.
   console.log("Create low-res canvas");
   const sceneTexture = device.createTexture({
     size: [SCREEN_WIDTH, SCREEN_HEIGHT],
     format: format,
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
+           GPUTextureUsage.COPY_SRC,
   });
   const sceneTextureView = sceneTexture.createView();
 
@@ -439,5 +508,9 @@ async function main() {
 
   console.log("Submitting command queue");
   device.queue.submit([commandEncoder.finish()]);
+
+  // Read the frame back and fingerprint it. This establishes the baseline
+  // that the init-function refactor must reproduce exactly.
+  await reportSnapshot(device, sceneTexture, format);
 }
 
