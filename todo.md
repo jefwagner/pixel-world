@@ -55,18 +55,45 @@ first even though the refactor is the more obvious-looking work.
   `4,8,12,16,20,16,12,8,4` without a browser, which is a cheap headless
   check that the extraction did not perturb the arithmetic.
 
-- [ ] **3. `node --test` suite for the extracted math**
+- [x] **3. `node --test` suite for the extracted math**
   Tests for `ftz`, `matMul`, `crossVec3`, `createTranslation`,
   `createViewRotation`, `createOrthoScale`, `createCamera` — encoding
-  *claims*, not restatements of the implementation. Free case from the
-  roadmap: the current hardcoded center `[0.5, 0, 0.6]` is off-constraint
-  (0.6 wu = 8.4 px), which is a test waiting to be written.
-  **Resolved wrinkle:** `.mjs` was kept and the server taught about it, rather
-  than renaming to `.js` and adding a `package.json`. nginx needed
+  *claims*, not restatements of the implementation. The hardcoded centre
+  `[0.5, 0, 0.6]` was the free case: it is off-constraint, and pinning it
+  settled a discrepancy the roadmap had carried.
+  **Open gap found:** `createOrthoScale(sWidth, sHeight)` accepts both
+  parameters and uses neither — the body returns `2/VW` and `2/VH`
+  unconditionally, so `CameraView.stretchWidth`/`stretchHeight` have no
+  effect anywhere. The Ch1 table calls for `s_x` 1.010 / `s_y` 1.003 on
+  diagonal views, so Step 2's `VIEWS` table will pass values that do
+  nothing. Pinned by a characterisation test that says to delete it once
+  the gap is closed; the fix belongs in Step 2.
+
+  Note for the next batch: these matrices are float32, so assertions
+  need float32-sized tolerances (~1e-6). The float32 image of 0.6
+  already differs from 0.6 by 2.4e-8, and `matMul` legitimately produces
+  negative zeros, which `assert/strict` treats as distinct from +0.
+
+  **Discrepancy settled:** the roadmap describes this centre as "0.6 wu =
+  8.4 px" off-constraint. That 8.4 px is `0.6 * 14`, an absolute distance
+  from the origin — not a screen displacement, and not an offset from the
+  gridline the diamond is actually symmetric about. That gridline is
+  z = 0.5, so the offset is 0.1 wu, and once projected it is
+  foreshortened: 0.1 wu moves the image about 1.1 px on screen
+  (0.99 px across, 0.50 px down), because the z axis is not perpendicular
+  to the view. The test pins the measured values. The roadmap wording is
+  deliberately left alone — which reading matters depends on where Step 2
+  anchors the constraint grid, and that is not a question a test should
+  settle.
+
+  **Resolved wrinkle:** `.mjs` was kept and the server taught about it,
+  rather than renaming to `.js` and adding a `package.json`. nginx needed
   `types { application/javascript mjs; }` in its `http` block — without it
-  `.mjs` fell through to `default_type` (`application/octet-stream`) and the
-  browser refused the module script under strict MIME checking. Python's
-  `http.server` already maps `.mjs` → `text/javascript`. Still no npm project.
+  `.mjs` fell through to `default_type` (`application/octet-stream`) and
+  the browser refused the module script under strict MIME checking. The
+  offending response is cached, so it needs a hard reload to clear.
+  Python's `http.server` already maps `.mjs` → `text/javascript`. Still no
+  npm project.
 
 ## Deliberately not in these items
 
