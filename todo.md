@@ -1,115 +1,139 @@
-# TODO — current / next-session actionable items
+# TODO — Step 2: the camera contract (snap + crop window)
 
-Session-scoped: 1–4 one-commit-sized items, rewritten at each planning
-session (see `AGENTS.md` → Modes of work). Cleared at the end of a work
-chunk.
+Session-scoped: 1–4 items, one commit each (see `AGENTS.md` → Modes of work).
+Cleared at the end of the work chunk.
 
-Branch: `jef/loop-refactor` (off `dev` @ `222069b`). `jef/` prefix because
-this is a supervised session; `agent/` prefix is for unsupervised runs.
+**Branch:** `jef/step2-camera-contract` (off `dev` @ `a19cb39`). **Mode:** tdd.
 
-Implements **roadmap.md Step 1** (refactor + render loop), plus the
-`node --test` harness that will serve Steps 2–6.
+**Session goal.** Roadmap Step 2: implement the 8-view camera contract end to
+end — the `VIEWS` table, `snapCamera`, the snap→crop decomposition, and a
+crop-aware present pass — while keeping the single tile. Tiling seams and
+instancing are Step 4; input and camera follow are Step 6.
 
-**Verification strategy.** The renderer is split into two halves, and they
-get tested differently — there is no test runner for WGSL, and no way to
-reach a GPU from Node:
+## Ground rules
 
-- **Pure math** (matrices, and later `snapCamera`/`VIEWS`) → `node --test`,
-  no npm, `node:test` is stdlib. Fast, permanent, catches float-exactness
-  regressions.
-- **GPU output** → the `mapAsync` snapshot from Task 1, diffed PNG to PNG.
-  Slow and manual, but a real assertion.
-
-Tasks are ordered readback-first so that Task 2's "renders the identical
-frame" claim is a *falsifiable* pixel diff rather than an eyeball judgement.
-Without the baseline that claim is unfalsifiable, which is why Task 1 goes
-first even though the refactor is the more obvious-looking work.
+- Pure math (`VIEWS`, stretch, `snapCamera`) lives in `www/projection.mjs` and
+  is tested with `node --test`; no npm.
+- GPU output is verified with `(await snapshot()).hash` against a baseline
+  recorded in this file.
+- Items 1 and 2 must leave the rendered image unchanged: the existing baseline
+  (`c8f95a5d`, full 160×120 buffer) must still reproduce. Item 3 legitimately
+  changes it (buffer size); record the new baseline there rather than treating
+  the mismatch as a regression. Item 4 changes it again by switching to the
+  real diagonal camera parameters.
+- The renderer keeps one textured quad throughout. No grid, no instancing.
 
 ## Items
 
-- [x] **1. `snapshotBuffer()` — pixel-exact readback of the internal buffer**
-  **Baseline (2026-09-27, must be reproduced exactly by Task 2):**
-  ```
-  [snapshot] nonBlack=100/19200 rowWidths=4,8,12,16,20,16,12,8,4 hash=c8f95a5d
-  ```
-  `PNG export deferred — the console fingerprint is what Task 2 diffs.
+- [ ] **1. Name the camera angles correctly and add the 8-view `VIEWS` table**
 
-- [x] **2. Refactor `main()` into named init functions + render loop**
-  Extract `initGPU()`, `createAssets()`, `createSceneResources()`,
-  `createPresentResources()`, `renderFrame()`. Promote `cameraView` to
-  mutable state. Add the `requestAnimationFrame` loop (re-encode per frame;
-  resource *creation* stays in init). Fix the two stale comments: the
-  vertex layout says "4 floats" but vertices are 5 (`x,y,z` + `uv`), and
-  `index.html` still says "WebGL".
-  Includes the small structural move that makes Task 3 possible: extract
-  the pure math into an importable module so Node can reach it.
-  **Verify:** internal-buffer dump is pixel-identical to Task 1's.
+  Fix the swapped angle naming, add the per-view parameter table from Ch1, and
+  make `createOrthoScale` actually honour `stretchWidth`/`stretchHeight`.
 
-  **Verified 2026-09-27:** `(await snapshot()).hash === 'c8f95a5d'` → `true`,
-  bit-identical to the Task 1 baseline.
+  - Rename `theta`/`phi` to `azimuth`/`elevation` everywhere (`CameraView`,
+    `createViewRotation`, `createCamera`, tests). The current formula has
+    `dir.y = -sin(theta)`, so `theta` is the elevation and `phi` the azimuth —
+    the existing comments and roadmap have them backwards.
+  - Export `VIEWS`: 8 entries keyed by azimuth 0, 45, …, 315. Cardinal views
+    (`kind: 'cardinal'`) use elevation 30°, `s_x = s_y = 1`; diagonal views
+    (`kind: 'diagonal'`) use elevation 30.25°, `s_x ≈ 1.01015`, `s_y ≈ 1.00255`.
+    Prefer the exact derived constants (`s_x = 5√2/7`, `s_y` from the Ch1
+    formula, elevation from its `asin`) so the ground-plane map is exactly
+    integer; leave the rounded table values in comments.
+  - `createOrthoScale` currently accepts both stretch arguments and uses
+    neither. Multiply the x and y scale terms by `s_x` and `s_y`.
+  - Delete the characterisation test that pins the ignored arguments.
 
-  Implementation note: `snapshot()` is now exposed on `window` and returns
-  the summary object, so the check is one line in the console —
-  `(await snapshot()).hash === 'c8f95a5d'`. The projection maths moved to
-  `www/projection.mjs`; re-deriving the diamond from it in Node reproduces
-  `4,8,12,16,20,16,12,8,4` without a browser, which is a cheap headless
-  check that the extraction did not perturb the arithmetic.
+  **Acceptance:** all `node --test` suites pass; `VIEWS` has 8 entries with the
+  right kinds; a cardinal view projects world steps to `(0, 14)` / `(-7, 0)`
+  buffer px and a diagonal view to `(±10, ±5)`; the browser hash is still
+  `c8f95a5d` (the running camera still uses stretch 1).
 
-- [x] **3. `node --test` suite for the extracted math**
-  Tests for `ftz`, `matMul`, `crossVec3`, `createTranslation`,
-  `createViewRotation`, `createOrthoScale`, `createCamera` — encoding
-  *claims*, not restatements of the implementation. The hardcoded centre
-  `[0.5, 0, 0.6]` was the free case: it is off-constraint, and pinning it
-  settled a discrepancy the roadmap had carried.
-  **Open gap found:** `createOrthoScale(sWidth, sHeight)` accepts both
-  parameters and uses neither — the body returns `2/VW` and `2/VH`
-  unconditionally, so `CameraView.stretchWidth`/`stretchHeight` have no
-  effect anywhere. The Ch1 table calls for `s_x` 1.010 / `s_y` 1.003 on
-  diagonal views, so Step 2's `VIEWS` table will pass values that do
-  nothing. Pinned by a characterisation test that says to delete it once
-  the gap is closed; the fix belongs in Step 2.
+- [ ] **2. `snapCamera(view, target)` — the constraint grid and the crop offset**
 
-  Note for the next batch: these matrices are float32, so assertions
-  need float32-sized tolerances (~1e-6). The float32 image of 0.6
-  already differs from 0.6 by 2.4e-8, and `matMul` legitimately produces
-  negative zeros, which `assert/strict` treats as distinct from +0.
+  Add a pure function returning `{ renderPos, cropOffset }`, and pin the snap
+  contract with tests.
 
-  **Discrepancy settled:** the roadmap describes this centre as "0.6 wu =
-  8.4 px" off-constraint. That 8.4 px is `0.6 * 14`, an absolute distance
-  from the origin — not a screen displacement, and not an offset from the
-  gridline the diamond is actually symmetric about. That gridline is
-  z = 0.5, so the offset is 0.1 wu, and once projected it is
-  foreshortened: 0.1 wu moves the image about 1.1 px on screen
-  (0.99 px across, 0.50 px down), because the z axis is not perpendicular
-  to the view. The test pins the measured values. The roadmap wording is
-  deliberately left alone — which reading matters depends on where Step 2
-  anchors the constraint grid, and that is not a question a test should
-  settle.
+  - Snap the camera centre `c` so its ground-plane projection is an integer
+    buffer pixel: `M·c ∈ Z²`, where `M` is the 2×2 world-(x,z)→buffer-px map of
+    the view. Then `cropOffset = M·(target − c)`, which is sub-pixel
+    (each component ≤ 0.5 px).
+  - This reproduces the known case: target `[0.5, 0, 0.6]` on the diagonal view
+    yields a snapped `renderPos` whose rasterisation is the symmetric 10-row
+    diamond, while the unsnapped target rasterises 9 rows.
+  - Keep the constraint in world units but document the pixel derivation in a
+    comment — the 14× factor is the classic bug.
 
-  **Resolved wrinkle:** `.mjs` was kept and the server taught about it,
-  rather than renaming to `.js` and adding a `package.json`. nginx needed
-  `types { application/javascript mjs; }` in its `http` block — without it
-  `.mjs` fell through to `default_type` (`application/octet-stream`) and
-  the browser refused the module script under strict MIME checking. The
-  offending response is cached, so it needs a hard reload to clear.
-  Python's `http.server` already maps `.mjs` → `text/javascript`. Still no
-  npm project.
+  **Acceptance:** for all 8 views, `M·renderPos` is integer within float32
+  tolerance and `|cropOffset| ≤ 0.5 px`; snapping is idempotent
+  (`snapCamera(view, renderPos)` returns the same `renderPos`, zero crop); two
+  targets inside one grid cell share `renderPos` but differ in `cropOffset`;
+  the browser hash is still `c8f95a5d` (nothing is wired up yet).
+
+- [ ] **3. Enlarge the internal buffer and make the present pass crop-aware**
+
+  Render into a 160×150 buffer while presenting a 160×120 window, so the crop
+  can slide without re-rasterising the scene.
+
+  - Split the buffer dimensions from the visible dimensions in
+    `projection.mjs`: `BUFFER_WIDTH`/`BUFFER_HEIGHT` (160×150) for the scene
+    pass, `SCREEN_WIDTH`/`SCREEN_HEIGHT` (160×120) for the visible window and
+    the 4× canvas. The camera matrix uses the buffer extent.
+  - Add a crop window to the present pass — a uniform with the window origin
+    (and size, if not compile-time), applied to the `uv` before sampling. Keep
+    nearest filtering and the single full-screen triangle.
+  - Default the window to the vertical centre (y = 15) so the visible image is
+    the same frame as before, just cropped from a taller buffer.
+  - Add debug keys to nudge the crop origin by whole buffer pixels and by
+    fractions of one, so the quantisation behaviour can be observed.
+  - Record the new full-buffer snapshot baseline here.
+
+  **Acceptance:** the canvas is still 640×480 at 4×; the centred 160×120 window
+  shows the same image as the old 160×120 buffer; moving the crop by whole
+  pixels shifts the image in 4-screen-pixel steps; fractional offsets produce
+  the per-column crawl under nearest sampling; `(await snapshot())` reports the
+  new 160×150 dimensions and the recorded hash.
+
+- [ ] **4. Cycle the 8 views and wire the snap→crop decomposition**
+
+  Make `V` step through `VIEWS`, drive the camera from `snapCamera`, and feed
+  the resulting crop offset to the present pass.
+
+  - Keep a continuous `state.viewTarget`; each frame compute
+    `{ renderPos, cropOffset } = snapCamera(VIEWS[state.viewIndex], viewTarget)`,
+    set `cameraView.center = renderPos`, and upload `cropOffset`.
+  - `V` advances the azimuth by 45°, re-snaps, and leaves the view target fixed.
+  - Optionally log the current view + crop offset to the console for
+    verification.
+  - Record the per-view snapshot fingerprints (or at least `rowWidths`) in this
+    file.
+
+  **Acceptance:** all 8 azimuths render; diagonal views show the symmetric
+  `2,6,10,14,18,18,14,10,6,2` diamond and cardinal views the 14×7 rectangle;
+  the tile rasterisation is identical at every snapped position; a target
+  nudged within a grid cell changes only the crop, not the tile pattern.
+
+## Findings / decisions
+
+- **Angle labels were swapped.** `createViewRotation` computes
+  `dir.y = -sin(theta)`, so `theta` is elevation and `phi` azimuth. Step 2's
+  table is azimuth-indexed; item 1 fixes the names before they multiply.
+- **Exact stretch beats the rounded table.** With `s_x = 5√2/7` and the Ch1
+  `s_y`, the diagonal ground-plane map is `[[−10, 10], [−5, −5]]` px/wu exactly.
+  The rounded table values leave ~0.000025 px/wu of drift.
+- **The snap contract is uniform.** Because `M` maps integer world steps to
+  integer pixels in both view kinds, `M·c ∈ Z²` is the whole constraint; the
+  cardinal/diagonal distinction only matters for texture selection in Step 3.
+- **The buffer margin is for the window, not the snap.** `cropOffset` is
+  sub-pixel, so the 15 px margin is headroom for crop nudging and later view
+  transitions, not a requirement of the snap itself.
 
 ## Deliberately not in these items
 
-- `snapCamera` / the `VIEWS` table — that is roadmap Step 2, a separate item.
-- Fixing the off-constraint `0.6` center — a *test* pins it down in Task 3;
-  changing it is Step 2's work.
-- Anything requiring a package manager.
-
-## Housekeeping spotted along the way
-
-- `snapshotPixels.test.mjs` sits inside `www/`, so it is served over HTTP
-  even though only `node --test` ever loads it. Harmless, but the tests
-  arguably belong outside the document root.
-- The `mjs` MIME entry lives in the host's `nginx.conf`, not in this repo, so
-  it is invisible to a fresh clone. Only affects nginx deployments —
-  `python3 -m http.server` is fine. Worth a line in `README.md` → Running it.
-- The tailnet URL failed with 403 once because a `www/` inode change left
-  the tailscale-router container pointing at a stale mount; restarting that
-  container fixed it. Worth remembering before assuming a code fault.
+- Tiling seams, instancing, a tile grid — roadmap Step 4.
+- Input, character movement, camera follow — roadmap Step 6.
+- Fez-style view transitions — roadmap Step 7.
+- Texture selection / the UV-to-texel transform — roadmap Step 3.
+- Previous-chunk housekeeping (test files inside `www/`, the host nginx `.mjs`
+  MIME entry, the tailnet 403 after a `www/` inode change) — parking in
+  `backlog.md`.
