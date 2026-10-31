@@ -22,7 +22,8 @@ import {
   CROP_ORIGIN_X,
   CROP_ORIGIN_Y,
   createCamera,
-  createWindowRect,
+  placeCamera,
+  VIEWS,
 } from './projection.mjs';
 
 import {
@@ -44,20 +45,17 @@ const state = {
   scene: null,
   present: null,
 
-  // Top-left of the visible window inside the larger scene buffer, in buffer
-  // pixels. Debug keys move this; roadmap Step 4 will feed it from snapCamera.
-  cropOrigin: { x: CROP_ORIGIN_X, y: CROP_ORIGIN_Y },
+  // Continuous camera target in world space. The camera itself is snapped
+  // each frame; this target stays continuous so the crop absorbs the
+  // sub-pixel remainder.
+  viewTarget: new Float32Array([0.5, 0, 0.5 + 0.1]),
 
-  // The quad sits on the xz plane (y = 0), so `center[1]` is always 0.
-  // z = 0.6 is already on the diagonal half-integer parity, which rasterises
-  // the 9-row tiling pattern; z = 0.5 is the 10-row parity.
-  cameraView: {
-    center: new Float32Array([0.5, 0, 0.5 + 0.1]),
-    azimuth: 45,
-    elevation: 30,
-    stretchWidth: 1,
-    stretchHeight: 1,
-  },
+  // Index into VIEWS; starts on the diagonal azimuth 45.
+  viewIndex: 1,
+
+  // Derived each frame by placeCamera().
+  cameraView: null,
+  cropOffset: { x: 0, y: 0 },
 };
 
 // Read the internal scene texture back to the CPU as tightly-packed RGBA.
@@ -112,7 +110,8 @@ async function snapshotBuffer(device, sceneTexture, width, height, format, origi
 //   (await snapshot({ window: true })).hash === 'c8f95a5d'
 //
 // The crop origin is rounded to whole buffer pixels for the copy; fractional
-// debug offsets are a present-pass concern, not a readback one.
+// snap offsets are a present-pass concern, not a readback one. The initial
+// on-grid target keeps the origin whole, so its window snapshot is exact.
 //
 // @param {{window?: boolean}} [options]
 // @returns {Promise<{nonBlack: number, total: number, rowWidths: string,
@@ -121,7 +120,10 @@ async function snapshot({ window: visibleWindow = false } = {}) {
   const width = visibleWindow ? SCREEN_WIDTH : BUFFER_WIDTH;
   const height = visibleWindow ? SCREEN_HEIGHT : BUFFER_HEIGHT;
   const origin = visibleWindow
-    ? { x: Math.round(state.cropOrigin.x), y: Math.round(state.cropOrigin.y) }
+    ? {
+        x: Math.round(CROP_ORIGIN_X + state.cropOffset.x),
+        y: Math.round(CROP_ORIGIN_Y + state.cropOffset.y),
+      }
     : { x: 0, y: 0 };
 
   const snap = await snapshotBuffer(
@@ -432,15 +434,16 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
 // buffer, then the present pass from that buffer to the canvas.
 //
 // The camera matrix is recomputed and re-uploaded every frame rather than
-// cached. At this scale that is free, and it means edits to state.cameraView
-// take effect on the next frame with no invalidation step — which is what
-// roadmap Step 2's view switching and Step 6's camera follow will want.
+// cached. At this scale that is free, and it means edits to viewIndex or
+// viewTarget take effect on the next frame with no invalidation step.
 function renderFrame() {
+  const placed = placeCamera(VIEWS[state.viewIndex], state.viewTarget);
+  state.cameraView = placed.cameraView;
+  state.cropOffset = placed.cropOffset;
+
   const cameraMatrix = createCamera(state.cameraView);
   state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
-
-  const windowRect = createWindowRect(state.cropOrigin.x, state.cropOrigin.y);
-  state.device.queue.writeBuffer(state.present.windowBuffer, 0, windowRect);
+  state.device.queue.writeBuffer(state.present.windowBuffer, 0, placed.windowRect);
 
   // There can be no async calls between getting the canvas texture and
   // queueing the commands.
@@ -491,29 +494,38 @@ function startRenderLoop() {
   });
 }
 
-// Debug controls for the crop window. Arrows move one whole buffer pixel;
-// Shift moves a quarter pixel so the nearest-neighbour quantisation crawl is
-// visible. The origin is clamped so the window never leaves the buffer.
-function installCropDebugKeys() {
+// Debug controls. V cycles the eight views. Arrows nudge the continuous view
+// target (Shift = quarter step), so the camera snaps at cell boundaries while
+// the crop window slides continuously.
+function installViewDebugKeys() {
   window.addEventListener('keydown', (event) => {
-    const step = event.shiftKey ? 0.25 : 1;
+    if (event.key.toLowerCase() === 'v') {
+      state.viewIndex = (state.viewIndex + 1) % VIEWS.length;
+      const view = VIEWS[state.viewIndex];
+      console.log(
+        `[view] index=${state.viewIndex} azimuth=${view.azimuth} kind=${view.kind}`,
+      );
+      return;
+    }
+
+    const step = event.shiftKey ? 0.0025 : 0.01;
     let dx = 0;
-    let dy = 0;
+    let dz = 0;
 
     switch (event.key) {
       case 'ArrowLeft':  dx = -step; break;
       case 'ArrowRight': dx = step;  break;
-      case 'ArrowUp':    dy = -step; break;
-      case 'ArrowDown':  dy = step;  break;
+      case 'ArrowUp':    dz = -step; break;
+      case 'ArrowDown':  dz = step;  break;
       default: return;
     }
 
     event.preventDefault();
-    const maxX = BUFFER_WIDTH - SCREEN_WIDTH;
-    const maxY = BUFFER_HEIGHT - SCREEN_HEIGHT;
-    state.cropOrigin.x = Math.min(maxX, Math.max(0, state.cropOrigin.x + dx));
-    state.cropOrigin.y = Math.min(maxY, Math.max(0, state.cropOrigin.y + dy));
-    console.log(`[crop] origin=${state.cropOrigin.x},${state.cropOrigin.y}`);
+    state.viewTarget[0] += dx;
+    state.viewTarget[2] += dz;
+    console.log(
+      `[target] x=${state.viewTarget[0].toFixed(3)} z=${state.viewTarget[2].toFixed(3)}`,
+    );
   });
 }
 
@@ -547,7 +559,7 @@ async function init() {
     state.device, assets, state.format, state.sceneTextureView, state.scene.sampler,
   );
 
-  installCropDebugKeys();
+  installViewDebugKeys();
 
   console.log("Init complete");
 }

@@ -21,6 +21,7 @@ import {
   createOrthoScale,
   createCamera,
   createWindowRect,
+  placeCamera,
   snapCamera,
   VIEWS,
   VIEW_KIND,
@@ -604,6 +605,83 @@ test("snapCamera ignores target y", () => {
   }
   assert.ok(closeTo(flat.cropOffset.x, raised.cropOffset.x));
   assert.ok(closeTo(flat.cropOffset.y, raised.cropOffset.y));
+});
+
+// --- placeCamera -------------------------------------------------------
+
+test("placeCamera centres the visible window on the snap remainder", () => {
+  for (const view of VIEWS) {
+    const target = [0.5, 0, 0.5];
+    const snap = snapCamera(view, target);
+    const placed = placeCamera(view, target);
+
+    for (let i = 0; i < 3; i++) {
+      assert.ok(
+        closeTo(placed.cameraView.center[i], snap.renderPos[i]),
+        `azimuth ${view.azimuth} centre ${i}`,
+      );
+    }
+    assert.equal(placed.cameraView.azimuth, view.azimuth);
+    assert.equal(placed.cameraView.elevation, view.elevation);
+    assert.equal(placed.cameraView.stretchWidth, view.stretchWidth);
+    assert.equal(placed.cameraView.stretchHeight, view.stretchHeight);
+
+    assert.ok(closeTo(placed.cropOffset.x, snap.cropOffset.x));
+    assert.ok(closeTo(placed.cropOffset.y, snap.cropOffset.y));
+
+    const expected = createWindowRect(
+      CROP_ORIGIN_X + snap.cropOffset.x,
+      CROP_ORIGIN_Y + snap.cropOffset.y,
+    );
+    for (let i = 0; i < 4; i++) {
+      assert.ok(
+        closeTo(placed.windowRect[i], expected[i]),
+        `azimuth ${view.azimuth} rect ${i}`,
+      );
+    }
+  }
+});
+
+test("placeCamera moves the window in the same direction as the snap remainder", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(view, "azimuth 45 is in VIEWS");
+
+  const placed = placeCamera(view, [0.5, 0, 0.5]);
+  assert.ok(closeTo(placed.cropOffset.x, 0));
+  assert.ok(closeTo(placed.cropOffset.y, -0.5));
+  assert.ok(closeTo(placed.windowRect[0], CROP_ORIGIN_X / BUFFER_WIDTH));
+  assert.ok(closeTo(placed.windowRect[1], (CROP_ORIGIN_Y - 0.5) / BUFFER_HEIGHT));
+  assert.ok(closeTo(placed.windowRect[2], SCREEN_WIDTH / BUFFER_WIDTH));
+  assert.ok(closeTo(placed.windowRect[3], SCREEN_HEIGHT / BUFFER_HEIGHT));
+});
+
+test("placeCamera follows the snapped camera, not the raw target", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(view, "azimuth 45 is in VIEWS");
+
+  const a = placeCamera(view, [0.52, 0, 0.52]);
+  const b = placeCamera(view, [0.51, 0, 0.51]);
+  for (let i = 0; i < 3; i++) {
+    assert.ok(closeTo(a.cameraView.center[i], b.cameraView.center[i]), `centre ${i}`);
+  }
+  assert.ok(closeTo(a.cropOffset.y, 0.3));
+  assert.ok(closeTo(b.cropOffset.y, 0.4));
+  assert.ok(closeTo(a.windowRect[0], b.windowRect[0]));
+  assert.ok(closeTo(a.windowRect[1] - b.windowRect[1], -0.1 / BUFFER_HEIGHT));
+});
+
+test("placeCamera leaves the window centred when the target is already on the grid", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(view, "azimuth 45 is in VIEWS");
+
+  const placed = placeCamera(view, [0.5, 0, 0.6]);
+  assert.ok(closeTo(placed.cropOffset.x, 0));
+  assert.ok(closeTo(placed.cropOffset.y, 0));
+
+  const expected = createWindowRect(CROP_ORIGIN_X, CROP_ORIGIN_Y);
+  for (let i = 0; i < 4; i++) {
+    assert.ok(closeTo(placed.windowRect[i], expected[i]), `rect ${i}`);
+  }
 });
 
 test("the 9-row and 10-row centres differ by less than a world unit", () => {

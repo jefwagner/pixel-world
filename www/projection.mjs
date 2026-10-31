@@ -313,3 +313,40 @@ export function createWindowRect(originX, originY) {
     SCREEN_HEIGHT / BUFFER_HEIGHT,
   ]);
 }
+
+/**
+ * @typedef {Object} PlacedCamera
+ * @property {CameraView} cameraView   snapped camera, ready for createCamera
+ * @property {{x: number, y: number}} cropOffset
+ * @property {Float32Array} windowRect normalised present-pass window
+ */
+
+/**
+ * Place a view at a continuous target: snap the camera, then shift the
+ * visible window by the snap remainder so the target stays centred.
+ *
+ * The camera rasterises on the view's constraint grid; the window absorbs the
+ * sub-pixel remainder. Keeping this composition here means the crop-origin
+ * sign is pinned by a unit test rather than by the renderer.
+ *
+ * @param {View} view
+ * @param {ArrayLike<number>} target  world [x, y, z]; y ignored
+ * @returns {PlacedCamera}
+ */
+export function placeCamera(view, target) {
+  const { renderPos, cropOffset } = snapCamera(view, target);
+  return {
+    cameraView: {
+      center: renderPos,
+      azimuth: view.azimuth,
+      elevation: view.elevation,
+      stretchWidth: view.stretchWidth,
+      stretchHeight: view.stretchHeight,
+    },
+    cropOffset,
+    windowRect: createWindowRect(
+      CROP_ORIGIN_X + cropOffset.x,
+      CROP_ORIGIN_Y + cropOffset.y,
+    ),
+  };
+}

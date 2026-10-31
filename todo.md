@@ -117,14 +117,14 @@ instancing are Step 4; input and camera follow are Step 6.
     `nonBlack=100/19200`, same `rowWidths`, hash `c8f95a5d` (unchanged).
   - arrows move the crop in whole buffer pixels, Shift+arrows by quarters.
 
-- [ ] **4. Cycle the 8 views and wire the snap→crop decomposition**
+- [x] **4. Cycle the 8 views and wire the snap→crop decomposition**
 
   Make `V` step through `VIEWS`, drive the camera from `snapCamera`, and feed
   the resulting crop offset to the present pass.
 
-  - Keep a continuous `state.viewTarget`; each frame compute
-    `{ renderPos, cropOffset } = snapCamera(VIEWS[state.viewIndex], viewTarget)`,
-    set `cameraView.center = renderPos`, and upload `cropOffset`.
+  - Keep a continuous `state.viewTarget`; each frame call
+    `placeCamera(VIEWS[state.viewIndex], viewTarget)` to get the snapped camera
+    and window rect, then upload both.
   - `V` advances the azimuth by 45°, re-snaps, and leaves the view target fixed.
   - Optionally log the current view + crop offset to the console for
     verification.
@@ -135,6 +135,23 @@ instancing are Step 4; input and camera follow are Step 6.
   `4,8,12,16,20,16,12,8,4` diamond and cardinal views the 14×7 rectangle;
   the tile rasterisation is identical at every snapped position; a target
   nudged within a grid cell changes only the crop, not the tile pattern.
+
+  **Verified (browser, hard reload):** `V` cycles 0–7 and logs the view;
+  arrows nudge the world target. Every diagonal rasterises the 9-row
+  `4,8,12,16,20,16,12,8,4` pattern; every cardinal the 14×7 rectangle
+  (`nonBlack=98`, 7 rows). Startup is index 1 (azimuth 45): buffer
+  `b873fdbd`, window `c8f95a5d`.
+
+  | index | azimuth | kind | buffer | window |
+  |---:|---:|---|---|---|
+  | 0 | 0 | cardinal | `815fc16d` | `645d792d` |
+  | 1 | 45 | diagonal | `b873fdbd` | `c8f95a5d` |
+  | 2 | 90 | cardinal | `ac20e62d` | `a4770a4d` |
+  | 3 | 135 | diagonal | `89a0cfad` | `f5993ecd` |
+  | 4 | 180 | cardinal | `f6803f1d` | `7b42f55d` |
+  | 5 | 225 | diagonal | `05dd6f9d` | `6132463d` |
+  | 6 | 270 | cardinal | `7186211d` | `6123a9fd` |
+  | 7 | 315 | diagonal | `ff88590d` | `231522ad` |
 
 ## Findings / decisions
 

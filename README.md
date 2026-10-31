@@ -11,16 +11,17 @@ where the agent needs the same rules you do.
 ## Current state
 
 A learning implementation: a two-stage renderer (`www/demo.js`) — one textured unit
-quad at a diagonal view (azimuth 45, elevation 30), rendered into a 180×150
-internal buffer, cropped to a 160×120 visible window and presented at 4×
-integer scale with nearest-neighbour filtering. A per-frame
-`requestAnimationFrame` loop re-encodes and submits each frame from a single
-mutable `state.cameraView` object, and `window.snapshot()` reads the internal
-buffer back as a pixel fingerprint for verification.
+quad rendered into a 180×150 internal buffer, cropped to a 160×120 visible
+window and presented at 4× integer scale with nearest-neighbour filtering. The
+camera steps through the eight `VIEWS` with `V`, snapping each frame to the
+Ch3 constraint grid and sliding the crop window by the sub-pixel remainder.
+`window.snapshot()` reads the internal buffer back as a pixel fingerprint for
+verification.
 
-Roadmap Step 1 (refactor, render loop, readback harness) is complete. Still
-missing: input, view switching, and the UV-to-texel transform. Next up is
-Step 2, the camera snap→crop contract.
+Roadmap Step 2 (the camera contract: `VIEWS`, `snapCamera`, the crop-aware
+present pass) is complete. Still missing: input/character movement, the
+UV-to-texel transform, and instancing. Next up is Step 3, authored per-view
+textures and 1-to-1 sampling.
 
 `roadmap.md` is the plan; `notes/open-questions.md` holds the unresolved
 design tensions. The design rationale is distilled in the wiki at
