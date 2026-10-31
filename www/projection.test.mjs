@@ -16,6 +16,11 @@ import {
   createViewRotation,
   createOrthoScale,
   createCamera,
+  VIEWS,
+  VIEW_KIND,
+  DIAGONAL_ELEVATION,
+  DIAGONAL_STRETCH_X,
+  DIAGONAL_STRETCH_Y,
 } from "./projection.mjs";
 
 // Tolerances below are sized for float32, not float64. These matrices are
@@ -153,10 +158,10 @@ const norm = (v) => Math.hypot(v[0], v[1], v[2]);
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 test("createViewRotation produces an orthonormal basis", () => {
-  for (const [theta, phi] of [[0, 0], [30, 45], [90, 45], [315, 45], [180, 30]]) {
-    const [right, up, negDir] = basis(createViewRotation(theta, phi));
+  for (const [azimuth, elevation] of [[0, 0], [45, 30], [90, 30], [315, 30], [180, 30]]) {
+    const [right, up, negDir] = basis(createViewRotation(azimuth, elevation));
     for (const v of [right, up, negDir]) {
-      assert.ok(Math.abs(norm(v) - 1) < EPS, `|v| for ${theta}/${phi}`);
+      assert.ok(Math.abs(norm(v) - 1) < EPS, `|v| for az ${azimuth}, el ${elevation}`);
     }
     assert.ok(Math.abs(dot(right, up)) < EPS, "right . up");
     assert.ok(Math.abs(dot(right, negDir)) < EPS, "right . -dir");
@@ -164,25 +169,37 @@ test("createViewRotation produces an orthonormal basis", () => {
   }
 });
 
+test("createViewRotation takes the azimuth first, then the elevation", () => {
+  // az=90, el=0 looks along +z: right is -x, up is +y, -dir is -z. Swapping
+  // the arguments would be el=90, az=0 and produce a completely different
+  // basis, so this pins the parameter order.
+  const [right, up, negDir] = basis(createViewRotation(90, 0));
+  assert.ok(Math.abs(right[0] + 1) < EPS, `right.x was ${right[0]}`);
+  assert.ok(Math.abs(right[2]) < EPS, `right.z was ${right[2]}`);
+  assert.ok(Math.abs(up[1] - 1) < EPS, `up.y was ${up[1]}`);
+  assert.ok(Math.abs(negDir[2] + 1) < EPS, `-dir.z was ${negDir[2]}`);
+});
+
 test("createViewRotation takes degrees, not radians", () => {
-  const M = createViewRotation(30, 45);
-  const theta_rad = 30 * Math.PI / 180;
-  const phi_rad = 45 * Math.PI / 180;
+  const M = createViewRotation(45, 30);
+  const azimuth_rad = 45 * Math.PI / 180;
+  const elevation_rad = 30 * Math.PI / 180;
   const expected = [
-    -Math.sin(phi_rad),
+    -Math.sin(azimuth_rad),
     0,
-    Math.cos(phi_rad),
+    Math.cos(azimuth_rad),
   ];
   const [right] = basis(M);
   assert.ok(Math.abs(right[0] - expected[0]) < EPS);
   assert.ok(Math.abs(right[1] - expected[1]) < EPS);
   assert.ok(Math.abs(right[2] - expected[2]) < EPS);
   // If the angles were taken as radians this would be wrong by a wide margin.
-  assert.ok(Math.abs(theta_rad - 30) > 1, "sanity: 30 deg is not 30 rad");
+  assert.ok(Math.abs(azimuth_rad - 45) > 1, "sanity: 45 deg is not 45 rad");
+  assert.ok(Math.abs(elevation_rad - 30) > 1, "sanity: 30 deg is not 30 rad");
 });
 
-test("createViewRotation at theta=0, phi=0 gives the expected basis", () => {
-  // Looking down -z: right is +z, up is +y, and the negated view direction
+test("createViewRotation at azimuth=0, elevation=0 gives the expected basis", () => {
+  // Looking along +x: right is +z, up is +y, and the negated view direction
   // is -x.
   const [right, up, negDir] = basis(createViewRotation(0, 0));
   assert.ok(Math.abs(right[0] - 0) < EPS);
@@ -219,28 +236,74 @@ test("createOrthoScale maps the depth range onto [0, 1]", () => {
   assert.ok(Math.abs(apply(S, [0, 0, VDF])[2] - 1) < EPS, "far plane is 1");
 });
 
-test("createOrthoScale ignores its stretch arguments", () => {
-  // CHARACTERISATION, not endorsement. createOrthoScale(sWidth, sHeight)
-  // returns 2/VW and 2/VH regardless of what it is passed, so the
-  // stretchWidth/stretchHeight fields of CameraView currently have no
-  // effect anywhere in the pipeline. The Ch1 table calls for 1.010 / 1.003
-  // on diagonal views, so this is a real gap. It belongs with roadmap
-  // Step 2, where the VIEWS table starts passing those values; fixing it
-  // here would change camera behaviour under cover of a test-only commit.
-  //
-  // When the gap is closed, this test should be deleted and replaced with
-  // one asserting that 1.010 actually narrows the x extent.
-  const a = [...createOrthoScale(1, 1)];
-  const b = [...createOrthoScale(1.010, 1.003)];
-  assert.deepEqual(b, a, "stretch arguments are currently dead parameters");
+test("createOrthoScale stretches the x and y extents independently", () => {
+  const S = createOrthoScale(2, 3);
+  const right = apply(S, [VW / 2, 0, 0]);
+  const up = apply(S, [0, VH / 2, 0]);
+  assert.ok(Math.abs(right[0] - 2) < EPS, `x extent was ${right[0]}`);
+  assert.ok(Math.abs(up[1] - 3) < EPS, `y extent was ${up[1]}`);
+});
+
+test("createOrthoScale leaves the depth mapping alone when stretched", () => {
+  const S = createOrthoScale(2, 3);
+  assert.ok(Math.abs(apply(S, [0, 0, VDN])[2] - 0) < EPS, "near plane is 0");
+  assert.ok(Math.abs(apply(S, [0, 0, VDF])[2] - 1) < EPS, "far plane is 1");
+});
+
+// --- VIEWS -------------------------------------------------------------
+
+test("VIEWS covers the eight compass azimuths in 45-degree steps", () => {
+  assert.equal(VIEWS.length, 8);
+  assert.deepEqual(VIEWS.map((view) => view.azimuth), [0, 45, 90, 135, 180, 225, 270, 315]);
+});
+
+test("VIEWS alternates cardinal and diagonal views", () => {
+  for (let i = 0; i < VIEWS.length; i++) {
+    const expected = i % 2 === 0 ? VIEW_KIND.CARDINAL : VIEW_KIND.DIAGONAL;
+    assert.equal(VIEWS[i].kind, expected, `index ${i}`);
+  }
+});
+
+test("VIEWS gives cardinal views the 30-degree unstretched camera", () => {
+  const cardinals = VIEWS.filter((view) => view.kind === VIEW_KIND.CARDINAL);
+  assert.equal(cardinals.length, 4);
+  for (const view of cardinals) {
+    assert.equal(view.elevation, 30);
+    assert.equal(view.stretchWidth, 1);
+    assert.equal(view.stretchHeight, 1);
+  }
+});
+
+test("VIEWS gives diagonal views the Ch1 camera", () => {
+  const diagonals = VIEWS.filter((view) => view.kind === VIEW_KIND.DIAGONAL);
+  assert.equal(diagonals.length, 4);
+  for (const view of diagonals) {
+    assert.ok(Math.abs(view.elevation - DIAGONAL_ELEVATION) < EPS);
+    assert.equal(view.stretchWidth, DIAGONAL_STRETCH_X);
+    assert.equal(view.stretchHeight, DIAGONAL_STRETCH_Y);
+  }
+
+  // Rounded Ch1 table values: these anchor the exact constants to the wiki.
+  assert.ok(
+    Math.abs(DIAGONAL_ELEVATION - 30.25) < 0.01,
+    `elevation was ${DIAGONAL_ELEVATION}`,
+  );
+  assert.ok(
+    Math.abs(DIAGONAL_STRETCH_X - 1.01015) < 1e-5,
+    `s_x was ${DIAGONAL_STRETCH_X}`,
+  );
+  assert.ok(
+    Math.abs(DIAGONAL_STRETCH_Y - 1.00255) < 1e-5,
+    `s_y was ${DIAGONAL_STRETCH_Y}`,
+  );
 });
 
 // --- createCamera ------------------------------------------------------
 
 const CANONICAL_VIEW = {
   center: new Float32Array([0.5, 0, 0.5 + 0.1]),
-  theta: 30,
-  phi: 45,
+  azimuth: 45,
+  elevation: 30,
   stretchWidth: 1,
   stretchHeight: 1,
 };
@@ -296,6 +359,82 @@ const toBufferPx = (C, p) => {
   ];
 };
 
+// The ground-plane offset produced by one world step, relative to the origin,
+// with the camera centred on the origin.
+const groundOffset = (view, x, z) => {
+  const C = createCamera({ ...view, center: new Float32Array([0, 0, 0]) });
+  const origin = toBufferPx(C, [0, 0, 0]);
+  const point = toBufferPx(C, [x, 0, z]);
+  return [point[0] - origin[0], point[1] - origin[1]];
+};
+
+test("every view maps the integer ground grid to integer buffer pixels", () => {
+  // This is the constraint snapCamera will consume in item 2: only when the
+  // world grid lands on whole buffer pixels can the diamond rasterise
+  // symmetrically. It fails immediately if the exact stretch drifts.
+  for (const view of VIEWS) {
+    for (let x = -3; x <= 3; x++) {
+      for (let z = -3; z <= 3; z++) {
+        const [px, py] = groundOffset(view, x, z);
+        assert.ok(
+          Math.abs(px - Math.round(px)) < 1e-4,
+          `azimuth ${view.azimuth} (${x},${z}) x was ${px}`,
+        );
+        assert.ok(
+          Math.abs(py - Math.round(py)) < 1e-4,
+          `azimuth ${view.azimuth} (${x},${z}) y was ${py}`,
+        );
+      }
+    }
+  }
+});
+
+test("cardinal views project unit ground steps to 14x7 pixels", () => {
+  const close = (a, b) => Math.abs(a - b) < 1e-3;
+  const isStep = (step, x, y) => close(Math.abs(step[0]), x) && close(Math.abs(step[1]), y);
+
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.CARDINAL)) {
+    const xStep = groundOffset(view, 1, 0);
+    const zStep = groundOffset(view, 0, 1);
+    assert.ok(
+      (isStep(xStep, 0, 7) && isStep(zStep, 14, 0)) ||
+      (isStep(xStep, 14, 0) && isStep(zStep, 0, 7)),
+      `azimuth ${view.azimuth}: x=${xStep}, z=${zStep}`,
+    );
+  }
+
+  // Pin the orientation once, so a rotated-but-valid basis cannot slip by.
+  const az0 = VIEWS.find((v) => v.azimuth === 0);
+  assert.ok(az0, "azimuth 0 is in VIEWS");
+  const xStep = groundOffset(az0, 1, 0);
+  const zStep = groundOffset(az0, 0, 1);
+  assert.ok(close(xStep[0], 0) && close(xStep[1], -7), `x step was ${xStep}`);
+  assert.ok(close(zStep[0], 14) && close(zStep[1], 0), `z step was ${zStep}`);
+});
+
+test("diagonal views project unit ground steps to 10x5 pixels", () => {
+  const close = (a, b) => Math.abs(a - b) < 1e-3;
+  const hasMagnitudes = (step, x, y) => {
+    const mags = [Math.abs(step[0]), Math.abs(step[1])].sort((a, b) => a - b);
+    return close(mags[0], x) && close(mags[1], y);
+  };
+
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.DIAGONAL)) {
+    const xStep = groundOffset(view, 1, 0);
+    const zStep = groundOffset(view, 0, 1);
+    assert.ok(hasMagnitudes(xStep, 5, 10), `azimuth ${view.azimuth} x=${xStep}`);
+    assert.ok(hasMagnitudes(zStep, 5, 10), `azimuth ${view.azimuth} z=${zStep}`);
+  }
+
+  // Pin the orientation once.
+  const az45 = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(az45, "azimuth 45 is in VIEWS");
+  const xStep = groundOffset(az45, 1, 0);
+  const zStep = groundOffset(az45, 0, 1);
+  assert.ok(close(xStep[0], -10) && close(xStep[1], -5), `x step was ${xStep}`);
+  assert.ok(close(zStep[0], 10) && close(zStep[1], -5), `z step was ${zStep}`);
+});
+
 test("the off-constraint centre shifts the image less than its world size", () => {
   // The roadmap describes this centre as "0.6 wu = 8.4 px" off-constraint.
   // That 8.4 px is 0.6 world units at 14 px/wu — an absolute distance, not a
@@ -319,7 +458,7 @@ test("the off-constraint centre shifts the image less than its world size", () =
   // on-grid centre puts it, and lower on screen.
   assert.ok(Math.abs(dx + 0.98995) < 1e-4, `dx was ${dx}`);
   assert.ok(Math.abs(dy - 0.49500) < 1e-4, `dy was ${dy}`);  // Less than the naive 0.1 * 14 = 1.4 px, because the z axis is
-  // foreshortened at phi=45, theta=30.
+  // foreshortened at azimuth=45, elevation=30.
   assert.ok(Math.hypot(dx, dy) < 0.1 * PIX_WU, "screen shift is under the naive figure");
 });
 

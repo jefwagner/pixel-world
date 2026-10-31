@@ -25,7 +25,7 @@ instancing are Step 4; input and camera follow are Step 6.
 
 ## Items
 
-- [ ] **1. Name the camera angles correctly and add the 8-view `VIEWS` table**
+- [x] **1. Name the camera angles correctly and add the 8-view `VIEWS` table**
 
   Fix the swapped angle naming, add the per-view parameter table from Ch1, and
   make `createOrthoScale` actually honour `stretchWidth`/`stretchHeight`.
@@ -48,6 +48,9 @@ instancing are Step 4; input and camera follow are Step 6.
   right kinds; a cardinal view projects world steps to `(0, 14)` / `(-7, 0)`
   buffer px and a diagonal view to `(±10, ±5)`; the browser hash is still
   `c8f95a5d` (the running camera still uses stretch 1).
+
+  **Verified:** 48 tests pass; an uncached browser reload renders identically
+  (user-confirmed); the golden camera matrix is bit-identical to before.
 
 - [ ] **2. `snapCamera(view, target)` — the constraint grid and the crop offset**
 

@@ -44,8 +44,8 @@ const state = {
   // rasterizes 9 rows rather than 10, which makes the asymmetry visible.
   cameraView: {
     center: new Float32Array([0.5, 0, 0.5 + 0.1]),
-    theta: 30,
-    phi: 45,
+    azimuth: 45,
+    elevation: 30,
     stretchWidth: 1,
     stretchHeight: 1,
   },

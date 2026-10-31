@@ -20,6 +20,38 @@ export const VH = SCREEN_HEIGHT / PIX_WU;    // view-height
 export const VDN = -100;                     // view-depth near plane
 export const VDF = 100;                      // view-depth far plane
 
+// Per-view camera parameters from the knowledge base (Ch1).
+//
+// The tile is L=14, W=7, so the diagonal diamond has half-diagonals p=10 and
+// q=5. The exact derived constants below keep the ground-plane projection
+// integral; the rounded Ch1 table values are 1.01015 and 1.00255, elevation
+// 30.25 degrees.
+export const DIAGONAL_STRETCH_X = (Math.SQRT2 * 10) / 14;        // ≈ 1.01015
+export const DIAGONAL_STRETCH_Y = Math.sqrt(
+  Math.cos(30 * Math.PI / 180) ** 2 + (2 * 5 ** 2) / (14 ** 2),
+);                                                              // ≈ 1.00255
+export const DIAGONAL_ELEVATION =
+  Math.asin((Math.SQRT2 * 5) / (DIAGONAL_STRETCH_Y * 14)) * 180 / Math.PI; // ≈ 30.25
+
+export const VIEW_KIND = Object.freeze({
+  CARDINAL: 'cardinal',
+  DIAGONAL: 'diagonal',
+});
+
+// The eight camera views, in 45-degree azimuth steps. Cardinal views use the
+// 2:1 rectangle camera; diagonal views use the Ch1 stretched camera that makes
+// the diamond exactly 20x10 buffer pixels.
+export const VIEWS = Object.freeze([
+  { azimuth:   0, elevation: 30,                 stretchWidth: 1,                  stretchHeight: 1,                  kind: VIEW_KIND.CARDINAL },
+  { azimuth:  45, elevation: DIAGONAL_ELEVATION, stretchWidth: DIAGONAL_STRETCH_X, stretchHeight: DIAGONAL_STRETCH_Y, kind: VIEW_KIND.DIAGONAL },
+  { azimuth:  90, elevation: 30,                 stretchWidth: 1,                  stretchHeight: 1,                  kind: VIEW_KIND.CARDINAL },
+  { azimuth: 135, elevation: DIAGONAL_ELEVATION, stretchWidth: DIAGONAL_STRETCH_X, stretchHeight: DIAGONAL_STRETCH_Y, kind: VIEW_KIND.DIAGONAL },
+  { azimuth: 180, elevation: 30,                 stretchWidth: 1,                  stretchHeight: 1,                  kind: VIEW_KIND.CARDINAL },
+  { azimuth: 225, elevation: DIAGONAL_ELEVATION, stretchWidth: DIAGONAL_STRETCH_X, stretchHeight: DIAGONAL_STRETCH_Y, kind: VIEW_KIND.DIAGONAL },
+  { azimuth: 270, elevation: 30,                 stretchWidth: 1,                  stretchHeight: 1,                  kind: VIEW_KIND.CARDINAL },
+  { azimuth: 315, elevation: DIAGONAL_ELEVATION, stretchWidth: DIAGONAL_STRETCH_X, stretchHeight: DIAGONAL_STRETCH_Y, kind: VIEW_KIND.DIAGONAL },
+]);
+
 // A simple flush-to-zero function.
 //
 // The projection matrix is multiplied out to 16 floats and uploaded as a
@@ -87,42 +119,48 @@ export function createTranslation(center) {
 
 /**
  * Orthographic scale matrix. The 2/VW, 2/VH factors map the view extent onto
- * clip space; the z terms map [VDN, VDF] onto [0, 1].
+ * clip space; the stretch factors widen or narrow the screen axes; the z terms
+ * map [VDN, VDF] onto [0, 1].
  *
- * @param {number} stretchWidth
- * @param {number} stretchHeight
+ * @param {number} stretchWidth   screen-space x stretch (s_x)
+ * @param {number} stretchHeight  screen-space y stretch (s_y)
  * @returns {Float32Array}
  */
 export function createOrthoScale(stretchWidth, stretchHeight) {
   return new Float32Array([
-    2 / VW, 0, 0, 0,
-    0, 2 / VH, 0, 0,
+    2 * stretchWidth / VW, 0, 0, 0,
+    0, 2 * stretchHeight / VH, 0, 0,
     0, 0, 1 / (VDF - VDN), 0,
     0, 0, -VDN / (VDF - VDN), 1,
   ]);
 }
 
 /**
- * View rotation from spherical angles. theta is the azimuth in degrees, phi
- * the elevation. The matrix rows are the camera basis: right, up, and -dir,
- * so a world vector is expressed in camera axes by this matrix.
+ * View rotation from spherical angles. Azimuth turns around the y axis;
+ * elevation tilts down toward the ground. The matrix rows are the camera
+ * basis: right, up, and -dir, so a world vector is expressed in camera axes
+ * by this matrix.
  *
- * @param {number} theta  azimuth, degrees
- * @param {number} phi    elevation, degrees
+ * The parameter order is azimuth first, then elevation. The previous API had
+ * them the other way round under the names theta/phi, which read backwards
+ * once azimuth-indexed view tables entered the picture.
+ *
+ * @param {number} azimuth    degrees, 0, 45, ..., 315
+ * @param {number} elevation  degrees above the horizon
  * @returns {Float32Array}
  */
-export function createViewRotation(theta, phi) {
-  const theta_rad = theta * Math.PI / 180;
-  const phi_rad = phi * Math.PI / 180;
+export function createViewRotation(azimuth, elevation) {
+  const azimuth_rad = azimuth * Math.PI / 180;
+  const elevation_rad = elevation * Math.PI / 180;
   const dir = new Float32Array([
-    Math.cos(phi_rad) * Math.cos(theta_rad),
-    -Math.sin(theta_rad),
-    Math.sin(phi_rad) * Math.cos(theta_rad),
+    Math.cos(elevation_rad) * Math.cos(azimuth_rad),
+    -Math.sin(elevation_rad),
+    Math.sin(azimuth_rad) * Math.cos(elevation_rad),
   ]);
   const right = new Float32Array([
-    -Math.sin(phi_rad),
+    -Math.sin(azimuth_rad),
     0,
-    Math.cos(phi_rad),
+    Math.cos(azimuth_rad),
   ]);
   const up = new Float32Array(3);
   crossVec3(right, dir, up);
@@ -137,10 +175,10 @@ export function createViewRotation(theta, phi) {
 /**
  * @typedef {Object} CameraView
  * @property {Float32Array} center
- * @property {number} theta   azimuth, degrees
- * @property {number} phi     elevation, degrees
- * @property {number} stretchWidth
- * @property {number} stretchHeight
+ * @property {number} azimuth       degrees, 0, 45, ..., 315
+ * @property {number} elevation     degrees above the horizon
+ * @property {number} stretchWidth  screen-space x stretch (s_x)
+ * @property {number} stretchHeight screen-space y stretch (s_y)
  */
 
 /**
@@ -155,7 +193,7 @@ export function createViewRotation(theta, phi) {
  */
 export function createCamera(view) {
   const T = createTranslation(view.center);
-  const V = createViewRotation(view.theta, view.phi);
+  const V = createViewRotation(view.azimuth, view.elevation);
   const S = createOrthoScale(view.stretchWidth, view.stretchHeight);
   const temp = new Float32Array(16);
   const C = new Float32Array(16);
