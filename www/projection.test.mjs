@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import {
   SCREEN_WIDTH,
   SCREEN_HEIGHT,
+  BUFFER_WIDTH,
+  BUFFER_HEIGHT,
+  CROP_ORIGIN_X,
+  CROP_ORIGIN_Y,
   PIX_WU,
   VW,
   VH,
@@ -16,6 +20,7 @@ import {
   createViewRotation,
   createOrthoScale,
   createCamera,
+  createWindowRect,
   snapCamera,
   VIEWS,
   VIEW_KIND,
@@ -29,6 +34,50 @@ import {
 // float32 representation of 0.6 alone differs from 0.6 by 2.4e-8. Asserting
 // at 1e-12 would fail on correct arithmetic.
 const EPS = 1e-6;
+
+// --- buffer / window ---------------------------------------------------
+
+test("the internal buffer is centred around the visible window", () => {
+  assert.equal(BUFFER_WIDTH, 180);
+  assert.equal(BUFFER_HEIGHT, 150);
+  assert.equal(SCREEN_WIDTH, 160);
+  assert.equal(SCREEN_HEIGHT, 120);
+  assert.equal(CROP_ORIGIN_X, 10);
+  assert.equal(CROP_ORIGIN_Y, 15);
+  assert.equal(2 * CROP_ORIGIN_X + SCREEN_WIDTH, BUFFER_WIDTH);
+  assert.equal(2 * CROP_ORIGIN_Y + SCREEN_HEIGHT, BUFFER_HEIGHT);
+});
+
+test("the camera projection uses the buffer extent", () => {
+  assert.ok(Math.abs(VW - BUFFER_WIDTH / PIX_WU) < EPS);
+  assert.ok(Math.abs(VH - BUFFER_HEIGHT / PIX_WU) < EPS);
+});
+
+test("createWindowRect maps the default crop to normalised coordinates", () => {
+  const rect = createWindowRect(CROP_ORIGIN_X, CROP_ORIGIN_Y);
+  assert.equal(rect.length, 4);
+  assert.ok(Math.abs(rect[0] - CROP_ORIGIN_X / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[1] - CROP_ORIGIN_Y / BUFFER_HEIGHT) < EPS);
+  assert.ok(Math.abs(rect[2] - SCREEN_WIDTH / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[3] - SCREEN_HEIGHT / BUFFER_HEIGHT) < EPS);
+});
+
+test("createWindowRect moves by whole buffer pixels", () => {
+  const base = createWindowRect(CROP_ORIGIN_X, CROP_ORIGIN_Y);
+  const moved = createWindowRect(CROP_ORIGIN_X + 1, CROP_ORIGIN_Y + 1);
+  assert.ok(Math.abs((moved[0] - base[0]) - 1 / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs((moved[1] - base[1]) - 1 / BUFFER_HEIGHT) < EPS);
+  assert.equal(moved[2], base[2]);
+  assert.equal(moved[3], base[3]);
+});
+
+test("createWindowRect accepts fractional origins", () => {
+  const rect = createWindowRect(10.25, 14.5);
+  assert.ok(Math.abs(rect[0] - 10.25 / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[1] - 14.5 / BUFFER_HEIGHT) < EPS);
+  assert.ok(Math.abs(rect[2] - SCREEN_WIDTH / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[3] - SCREEN_HEIGHT / BUFFER_HEIGHT) < EPS);
+});
 
 // --- ftz ---------------------------------------------------------------
 
@@ -315,13 +364,13 @@ test("createCamera reproduces the golden matrix for the canonical view", () => {
   // multiply order (scale * view * translation) and the trailing ftz pass are
   // both load-bearing for texel-exactness: reassociating this arithmetic
   // would still be a valid camera and would still look right, but would move
-  // texels and change the snapshot hash. These are the values the recorded
-  // baseline c8f95a5d depends on.
+  // texels. These are the values for the 180x150 scene buffer; the centred
+  // 160x120 crop should still fingerprint c8f95a5d.
   //
   // Transposed for readability - matMul stores column-major.
   const expected = [
-    -0.1237436830997467, 0.0, 0.1237436830997467, -0.01237437129020691,
-    0.0824957937002182, 0.2020726054906845, 0.0824957937002182, -0.09074537456035614,
+    -0.10999438911676407, 0.0, 0.10999438911676407, -0.010999441146850586,
+    0.06599663197994232, 0.16165807843208313, 0.06599663197994232, -0.07259629666805267,
     -0.0030618621967732906, 0.0024999999441206455, -0.0030618621967732906, 0.5033680200576782,
     0.0, 0.0, 0.0, 1.0,
   ];
@@ -355,8 +404,8 @@ test("createCamera is deterministic", () => {
 const toBufferPx = (C, p) => {
   const o = apply(C, p);
   return [
-    (o[0] / o[3] * 0.5 + 0.5) * SCREEN_WIDTH,
-    (1 - (o[1] / o[3] * 0.5 + 0.5)) * SCREEN_HEIGHT,
+    (o[0] / o[3] * 0.5 + 0.5) * BUFFER_WIDTH,
+    (1 - (o[1] / o[3] * 0.5 + 0.5)) * BUFFER_HEIGHT,
   ];
 };
 
@@ -596,9 +645,9 @@ const quadCoverage = (C) => {
   };
   let n = 0;
   const rows = [];
-  for (let y = 0; y < SCREEN_HEIGHT; y++) {
+  for (let y = 0; y < BUFFER_HEIGHT; y++) {
     let w = 0;
-    for (let x = 0; x < SCREEN_WIDTH; x++) if (inside(x + 0.5, y + 0.5)) { n++; w++; }
+    for (let x = 0; x < BUFFER_WIDTH; x++) if (inside(x + 0.5, y + 0.5)) { n++; w++; }
     if (w > 0) rows.push(w);
   }
   return { n, rows: rows.join(","), rowCount: rows.length };

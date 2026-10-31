@@ -91,12 +91,12 @@ rasterized" from "what the player sees."
   14 px/wu). The current hardcoded center `[0.5, 0, 0.6]` is already on the
   diagonal half-integer parity (the 9-row case); `[0.5, 0, 0.5]` is the 10-row
   parity. Both are useful test cases.
-- Enlarge the internal buffer so there is room to crop: 160×120 → 160×150 (15 px
-  margin top/bottom; the blog used the same 12.5% ratio: 320×240 with 30 px
-  margins). The scene pass renders the full buffer; the *visible window* stays
-  160×120, preserving the clean 4× scale to 640×480.
+- Enlarge the internal buffer so there is room to crop in both axes:
+  160×120 → 180×150 (10 px left/right and 15 px top/bottom margins). The scene
+  pass renders the full buffer; the *visible window* stays 160×120, preserving
+  the clean 4× scale to 640×480.
 - Crop-aware present pass: sample the 160×120 window at `cropOffset` inside the
-  160×150 buffer (window rect as a uniform; nearest filter; integer scale as
+  180×150 buffer (window rect as a uniform; nearest filter; integer scale as
   before).
 - Cycle views with a key (e.g., "V"): next azimuth, re-snap, update camera state.
   Debug keys to nudge the view target / crop offset.

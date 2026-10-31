@@ -50,6 +50,13 @@ struct PresentOutput {
 @group(0) @binding(0) var presSampler: sampler;
 @group(0) @binding(1) var presTexture: texture_2d<f32>;
 
+// xy = crop-window origin in normalised buffer UV
+// zw = crop-window size in normalised buffer UV
+struct PresentWindow {
+    rect: vec4<f32>,
+};
+@group(0) @binding(2) var<uniform> presentWindow: PresentWindow;
+
 // Create single large triangle covering screen
 @vertex
 fn vs_present(
@@ -68,9 +75,10 @@ fn vs_present(
     return out;
 }
 
-// Sample from texture
+// Sample the visible window from inside the larger internal buffer
 @fragment
 fn fs_present(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-	return textureSample(presTexture, presSampler, uv);
+	let windowUv = presentWindow.rect.xy + uv * presentWindow.rect.zw;
+	return textureSample(presTexture, presSampler, windowUv);
 }
 

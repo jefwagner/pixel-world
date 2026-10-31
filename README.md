@@ -11,11 +11,12 @@ where the agent needs the same rules you do.
 ## Current state
 
 A learning implementation: a two-stage renderer (`www/demo.js`) — one textured unit
-quad at a diagonal view (theta=30, phi=45), rendered into a 160×120 internal
-buffer and presented at 4× integer scale with nearest-neighbour filtering. A
-per-frame `requestAnimationFrame` loop re-encodes and submits each frame from a
-single mutable `state.cameraView` object, and `window.snapshot()` reads the
-internal buffer back as a pixel fingerprint for verification.
+quad at a diagonal view (azimuth 45, elevation 30), rendered into a 180×150
+internal buffer, cropped to a 160×120 visible window and presented at 4×
+integer scale with nearest-neighbour filtering. A per-frame
+`requestAnimationFrame` loop re-encodes and submits each frame from a single
+mutable `state.cameraView` object, and `window.snapshot()` reads the internal
+buffer back as a pixel fingerprint for verification.
 
 Roadmap Step 1 (refactor, render loop, readback harness) is complete. Still
 missing: input, view switching, and the UV-to-texel transform. Next up is

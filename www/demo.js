@@ -17,7 +17,12 @@
 import {
   SCREEN_WIDTH,
   SCREEN_HEIGHT,
+  BUFFER_WIDTH,
+  BUFFER_HEIGHT,
+  CROP_ORIGIN_X,
+  CROP_ORIGIN_Y,
   createCamera,
+  createWindowRect,
 } from './projection.mjs';
 
 import {
@@ -39,9 +44,13 @@ const state = {
   scene: null,
   present: null,
 
+  // Top-left of the visible window inside the larger scene buffer, in buffer
+  // pixels. Debug keys move this; roadmap Step 4 will feed it from snapCamera.
+  cropOrigin: { x: CROP_ORIGIN_X, y: CROP_ORIGIN_Y },
+
   // The quad sits on the xz plane (y = 0), so `center[1]` is always 0.
-  // The z of 0.6 is deliberately off the 0.5 gridline — the diamond
-  // rasterizes 9 rows rather than 10, which makes the asymmetry visible.
+  // z = 0.6 is already on the diagonal half-integer parity, which rasterises
+  // the 9-row tiling pattern; z = 0.5 is the 10-row parity.
   cameraView: {
     center: new Float32Array([0.5, 0, 0.5 + 0.1]),
     azimuth: 45,
@@ -53,9 +62,10 @@ const state = {
 
 // Read the internal scene texture back to the CPU as tightly-packed RGBA.
 //
-// copyTextureToBuffer requires bytesPerRow to be a multiple of 256; at 160px
-// RGBA that is 768, not 640, so each row comes back with 128 bytes of padding
-// that must be stripped or the image shears diagonally.
+// copyTextureToBuffer requires bytesPerRow to be a multiple of 256. At the
+// 180px buffer width the RGBA row is 720 bytes, rounded up to 768, so each row
+// comes back with 48 bytes of padding that must be stripped or the image
+// shears diagonally. The 160px window is 640 bytes, padded to 768 likewise.
 //
 // The copy is submitted after whatever frames the render loop has already
 // queued, so the result reflects the most recently *submitted* frame — at
@@ -69,7 +79,7 @@ const state = {
 // @param {string} format             the texture's format, e.g. 'bgra8unorm'
 // @returns {Promise<{width: number, height: number, format: string,
 //                    data: Uint8Array}>}
-async function snapshotBuffer(device, sceneTexture, width, height, format) {
+async function snapshotBuffer(device, sceneTexture, width, height, format, origin = { x: 0, y: 0 }) {
   const bytesPerRow = bytesPerRowAligned(width, 4);
   const readback = device.createBuffer({
     size: bytesPerRow * height,
@@ -78,7 +88,7 @@ async function snapshotBuffer(device, sceneTexture, width, height, format) {
 
   const encoder = device.createCommandEncoder();
   encoder.copyTextureToBuffer(
-    { texture: sceneTexture },
+    { texture: sceneTexture, origin },
     { buffer: readback, bytesPerRow },
     [width, height, 1],
   );
@@ -95,21 +105,33 @@ async function snapshotBuffer(device, sceneTexture, width, height, format) {
 
 // Read back the current frame and return its fingerprint.
 //
-// Logs one line, caches the result on window.lastSnapshot, and resolves to
-// the summary object so verification is a single expression:
+// By default this snapshots the full internal buffer. Pass `{ window: true }`
+// to fingerprint only the visible 160x120 crop, which is the way to check
+// that the larger buffer did not change the presented image:
 //
-//   (await snapshot()).hash === 'c8f95a5d'
+//   (await snapshot({ window: true })).hash === 'c8f95a5d'
 //
+// The crop origin is rounded to whole buffer pixels for the copy; fractional
+// debug offsets are a present-pass concern, not a readback one.
+//
+// @param {{window?: boolean}} [options]
 // @returns {Promise<{nonBlack: number, total: number, rowWidths: string,
 //                    hash: string}>}
-async function snapshot() {
+async function snapshot({ window: visibleWindow = false } = {}) {
+  const width = visibleWindow ? SCREEN_WIDTH : BUFFER_WIDTH;
+  const height = visibleWindow ? SCREEN_HEIGHT : BUFFER_HEIGHT;
+  const origin = visibleWindow
+    ? { x: Math.round(state.cropOrigin.x), y: Math.round(state.cropOrigin.y) }
+    : { x: 0, y: 0 };
+
   const snap = await snapshotBuffer(
-    state.device, state.sceneTexture, SCREEN_WIDTH, SCREEN_HEIGHT, state.format,
+    state.device, state.sceneTexture, width, height, state.format, origin,
   );
   const s = summarise(snap);
   window.lastSnapshot = s;
   console.log(
-    `[snapshot] nonBlack=${s.nonBlack}/${s.total} ` +
+    `[snapshot${visibleWindow ? ':window' : ''}] ` +
+    `nonBlack=${s.nonBlack}/${s.total} ` +
     `rowWidths=${s.rowWidths} hash=${s.hash}`,
   );
   return s;
@@ -166,9 +188,8 @@ async function createAssets(device) {
   return { imageBitmap, shaderModule };
 }
 
-// The internal low-res render target. Larger than the visible window in
-// future (roadmap Step 2 adds a crop margin), which is why its size and the
-// window size are kept distinct here even though they match today.
+// The internal low-res render target. Larger than the visible window in both
+// axes, so the crop window can slide without re-rasterising the scene.
 //
 // COPY_SRC is required for snapshotBuffer(); it is not a present-only target.
 //
@@ -178,7 +199,7 @@ async function createAssets(device) {
 function createSceneTexture(device, format) {
   console.log("Create low-res canvas");
   return device.createTexture({
-    size: [SCREEN_WIDTH, SCREEN_HEIGHT],
+    size: [BUFFER_WIDTH, BUFFER_HEIGHT],
     format: format,
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
            GPUTextureUsage.COPY_SRC,
@@ -351,11 +372,22 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
 function createPresentResources(device, assets, format, sceneTextureView, sampler) {
   const { shaderModule } = assets;
 
+  // [originU, originV, sizeU, sizeV], rewritten each frame as the crop moves.
+  const windowBuffer = device.createBuffer({
+    size: 4 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
   console.log("Creating presentation bindgroup layout");
   const presentBindGroupLayout = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: 'uniform' },
+      },
     ]
   });
   const presentBindGroup = device.createBindGroup({
@@ -363,6 +395,7 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
     entries: [
       { binding: 0, resource: sampler },
       { binding: 1, resource: sceneTextureView },
+      { binding: 2, resource: { buffer: windowBuffer } },
     ],
   });
 
@@ -388,7 +421,11 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
     },
   });
 
-  return { pipeline: presentPipeline, bindGroup: presentBindGroup };
+  return {
+    pipeline: presentPipeline,
+    bindGroup: presentBindGroup,
+    windowBuffer,
+  };
 }
 
 // Encode and submit exactly one frame: the scene pass into the internal
@@ -401,6 +438,9 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
 function renderFrame() {
   const cameraMatrix = createCamera(state.cameraView);
   state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
+
+  const windowRect = createWindowRect(state.cropOrigin.x, state.cropOrigin.y);
+  state.device.queue.writeBuffer(state.present.windowBuffer, 0, windowRect);
 
   // There can be no async calls between getting the canvas texture and
   // queueing the commands.
@@ -417,7 +457,7 @@ function renderFrame() {
       storeOp: 'store',
     }]
   });
-  scenePassEncoder.setViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 1);
+  scenePassEncoder.setViewport(0, 0, BUFFER_WIDTH, BUFFER_HEIGHT, 0, 1);
   scenePassEncoder.setVertexBuffer(0, state.scene.vertexBuffer);
   scenePassEncoder.setIndexBuffer(state.scene.indexBuffer, 'uint16');
   scenePassEncoder.setPipeline(state.scene.pipeline);
@@ -451,6 +491,32 @@ function startRenderLoop() {
   });
 }
 
+// Debug controls for the crop window. Arrows move one whole buffer pixel;
+// Shift moves a quarter pixel so the nearest-neighbour quantisation crawl is
+// visible. The origin is clamped so the window never leaves the buffer.
+function installCropDebugKeys() {
+  window.addEventListener('keydown', (event) => {
+    const step = event.shiftKey ? 0.25 : 1;
+    let dx = 0;
+    let dy = 0;
+
+    switch (event.key) {
+      case 'ArrowLeft':  dx = -step; break;
+      case 'ArrowRight': dx = step;  break;
+      case 'ArrowUp':    dy = -step; break;
+      case 'ArrowDown':  dy = step;  break;
+      default: return;
+    }
+
+    event.preventDefault();
+    const maxX = BUFFER_WIDTH - SCREEN_WIDTH;
+    const maxY = BUFFER_HEIGHT - SCREEN_HEIGHT;
+    state.cropOrigin.x = Math.min(maxX, Math.max(0, state.cropOrigin.x + dx));
+    state.cropOrigin.y = Math.min(maxY, Math.max(0, state.cropOrigin.y + dy));
+    console.log(`[crop] origin=${state.cropOrigin.x},${state.cropOrigin.y}`);
+  });
+}
+
 // Create the canvas we will be working with
 console.log("Creating canvas");
 const demoDiv = document.getElementById("demo");
@@ -481,16 +547,20 @@ async function init() {
     state.device, assets, state.format, state.sceneTextureView, state.scene.sampler,
   );
 
+  installCropDebugKeys();
+
   console.log("Init complete");
 }
 
 init()
   .then(async () => {
     // Render one frame and fingerprint it, so the console opens with the
-    // baseline the todo.md verification refers to. Then hand over to the
-    // loop, which renders continuously from here on.
+    // baseline the todo.md verification refers to. Log both the full buffer
+    // and the visible crop; the latter is the one that should still match the
+    // old 160x120 baseline. Then hand over to the loop.
     renderFrame();
     await snapshot();
+    await snapshot({ window: true });
     startRenderLoop();
   })
   .catch((err) => {

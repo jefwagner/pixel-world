@@ -6,19 +6,29 @@
 //
 // Run the tests with: node --test www/projection.test.mjs
 
-// Screen-size in pixels
+// Visible window in pixels: what the present pass samples and what the
+// canvas shows.
 export const SCREEN_WIDTH = 160;
 export const SCREEN_HEIGHT = 120;
 
+// Internal scene buffer. Larger than the visible window in both axes so the
+// crop window can slide without re-rasterising the scene.
+export const BUFFER_WIDTH = 180;
+export const BUFFER_HEIGHT = 150;
+
 // Constants used to calculate projection matrix
 // - 14 pixels per world unit
-// - internal canvas is 160x120
+// - internal buffer is BUFFER_WIDTH x BUFFER_HEIGHT
 // - near and far plane simply set large
 export const PIX_WU = 14;                    // pixels/world-unit
-export const VW = SCREEN_WIDTH / PIX_WU;     // view-width
-export const VH = SCREEN_HEIGHT / PIX_WU;    // view-height
+export const VW = BUFFER_WIDTH / PIX_WU;     // view-width
+export const VH = BUFFER_HEIGHT / PIX_WU;    // view-height
 export const VDN = -100;                     // view-depth near plane
 export const VDF = 100;                      // view-depth far plane
+
+// Default top-left of the visible window inside the buffer (centred).
+export const CROP_ORIGIN_X = (BUFFER_WIDTH - SCREEN_WIDTH) / 2;   // 10
+export const CROP_ORIGIN_Y = (BUFFER_HEIGHT - SCREEN_HEIGHT) / 2; // 15
 
 // Per-view camera parameters from the knowledge base (Ch1).
 //
@@ -283,4 +293,23 @@ export function createCamera(view) {
     C[i] = ftz(C[i]);
   }
   return C;
+}
+
+/**
+ * Normalised window rect for the present shader.
+ *
+ * The shader samples at `rect.xy + uv * rect.zw`, so the rect is expressed in
+ * normalised buffer UV: origin first, then size.
+ *
+ * @param {number} originX  buffer px, top-left of the visible window
+ * @param {number} originY  buffer px, top-left of the visible window
+ * @returns {Float32Array} [originU, originV, sizeU, sizeV]
+ */
+export function createWindowRect(originX, originY) {
+  return new Float32Array([
+    originX / BUFFER_WIDTH,
+    originY / BUFFER_HEIGHT,
+    SCREEN_WIDTH / BUFFER_WIDTH,
+    SCREEN_HEIGHT / BUFFER_HEIGHT,
+  ]);
 }

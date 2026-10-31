@@ -85,7 +85,7 @@ instancing are Step 4; input and camera follow are Step 6.
   **Verified:** 56 tests pass; the renderer still bypasses `snapCamera`, so
   the rendered frame is unchanged.
 
-- [ ] **3. Enlarge the internal buffer to 180×150 and make the present pass crop-aware**
+- [x] **3. Enlarge the internal buffer to 180×150 and make the present pass crop-aware**
 
   Render into a 180×150 buffer while presenting a 160×120 window, so the crop
   can slide in both axes without re-rasterising the scene.
@@ -109,6 +109,13 @@ instancing are Step 4; input and camera follow are Step 6.
   pixels shifts the image in 4-screen-pixel steps; fractional offsets produce
   the per-column crawl under nearest sampling; `(await snapshot())` reports the
   new 180×150 dimensions and the recorded hash.
+
+  **Verified (browser, hard reload):**
+  - full 180×150: `nonBlack=100/27000`,
+    `rowWidths=4,8,12,16,20,16,12,8,4`, hash `b873fdbd`.
+  - visible 160×120 via `snapshot({ window: true })`:
+    `nonBlack=100/19200`, same `rowWidths`, hash `c8f95a5d` (unchanged).
+  - arrows move the crop in whole buffer pixels, Shift+arrows by quarters.
 
 - [ ] **4. Cycle the 8 views and wire the snap→crop decomposition**
 
