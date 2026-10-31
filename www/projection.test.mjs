@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import {
   SCREEN_WIDTH,
   SCREEN_HEIGHT,
+  BUFFER_WIDTH,
+  BUFFER_HEIGHT,
+  CROP_ORIGIN_X,
+  CROP_ORIGIN_Y,
   PIX_WU,
   VW,
   VH,
@@ -16,6 +20,14 @@ import {
   createViewRotation,
   createOrthoScale,
   createCamera,
+  createWindowRect,
+  placeCamera,
+  snapCamera,
+  VIEWS,
+  VIEW_KIND,
+  DIAGONAL_ELEVATION,
+  DIAGONAL_STRETCH_X,
+  DIAGONAL_STRETCH_Y,
 } from "./projection.mjs";
 
 // Tolerances below are sized for float32, not float64. These matrices are
@@ -23,6 +35,50 @@ import {
 // float32 representation of 0.6 alone differs from 0.6 by 2.4e-8. Asserting
 // at 1e-12 would fail on correct arithmetic.
 const EPS = 1e-6;
+
+// --- buffer / window ---------------------------------------------------
+
+test("the internal buffer is centred around the visible window", () => {
+  assert.equal(BUFFER_WIDTH, 180);
+  assert.equal(BUFFER_HEIGHT, 150);
+  assert.equal(SCREEN_WIDTH, 160);
+  assert.equal(SCREEN_HEIGHT, 120);
+  assert.equal(CROP_ORIGIN_X, 10);
+  assert.equal(CROP_ORIGIN_Y, 15);
+  assert.equal(2 * CROP_ORIGIN_X + SCREEN_WIDTH, BUFFER_WIDTH);
+  assert.equal(2 * CROP_ORIGIN_Y + SCREEN_HEIGHT, BUFFER_HEIGHT);
+});
+
+test("the camera projection uses the buffer extent", () => {
+  assert.ok(Math.abs(VW - BUFFER_WIDTH / PIX_WU) < EPS);
+  assert.ok(Math.abs(VH - BUFFER_HEIGHT / PIX_WU) < EPS);
+});
+
+test("createWindowRect maps the default crop to normalised coordinates", () => {
+  const rect = createWindowRect(CROP_ORIGIN_X, CROP_ORIGIN_Y);
+  assert.equal(rect.length, 4);
+  assert.ok(Math.abs(rect[0] - CROP_ORIGIN_X / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[1] - CROP_ORIGIN_Y / BUFFER_HEIGHT) < EPS);
+  assert.ok(Math.abs(rect[2] - SCREEN_WIDTH / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[3] - SCREEN_HEIGHT / BUFFER_HEIGHT) < EPS);
+});
+
+test("createWindowRect moves by whole buffer pixels", () => {
+  const base = createWindowRect(CROP_ORIGIN_X, CROP_ORIGIN_Y);
+  const moved = createWindowRect(CROP_ORIGIN_X + 1, CROP_ORIGIN_Y + 1);
+  assert.ok(Math.abs((moved[0] - base[0]) - 1 / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs((moved[1] - base[1]) - 1 / BUFFER_HEIGHT) < EPS);
+  assert.equal(moved[2], base[2]);
+  assert.equal(moved[3], base[3]);
+});
+
+test("createWindowRect accepts fractional origins", () => {
+  const rect = createWindowRect(10.25, 14.5);
+  assert.ok(Math.abs(rect[0] - 10.25 / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[1] - 14.5 / BUFFER_HEIGHT) < EPS);
+  assert.ok(Math.abs(rect[2] - SCREEN_WIDTH / BUFFER_WIDTH) < EPS);
+  assert.ok(Math.abs(rect[3] - SCREEN_HEIGHT / BUFFER_HEIGHT) < EPS);
+});
 
 // --- ftz ---------------------------------------------------------------
 
@@ -153,10 +209,10 @@ const norm = (v) => Math.hypot(v[0], v[1], v[2]);
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 test("createViewRotation produces an orthonormal basis", () => {
-  for (const [theta, phi] of [[0, 0], [30, 45], [90, 45], [315, 45], [180, 30]]) {
-    const [right, up, negDir] = basis(createViewRotation(theta, phi));
+  for (const [azimuth, elevation] of [[0, 0], [45, 30], [90, 30], [315, 30], [180, 30]]) {
+    const [right, up, negDir] = basis(createViewRotation(azimuth, elevation));
     for (const v of [right, up, negDir]) {
-      assert.ok(Math.abs(norm(v) - 1) < EPS, `|v| for ${theta}/${phi}`);
+      assert.ok(Math.abs(norm(v) - 1) < EPS, `|v| for az ${azimuth}, el ${elevation}`);
     }
     assert.ok(Math.abs(dot(right, up)) < EPS, "right . up");
     assert.ok(Math.abs(dot(right, negDir)) < EPS, "right . -dir");
@@ -164,25 +220,37 @@ test("createViewRotation produces an orthonormal basis", () => {
   }
 });
 
+test("createViewRotation takes the azimuth first, then the elevation", () => {
+  // az=90, el=0 looks along +z: right is -x, up is +y, -dir is -z. Swapping
+  // the arguments would be el=90, az=0 and produce a completely different
+  // basis, so this pins the parameter order.
+  const [right, up, negDir] = basis(createViewRotation(90, 0));
+  assert.ok(Math.abs(right[0] + 1) < EPS, `right.x was ${right[0]}`);
+  assert.ok(Math.abs(right[2]) < EPS, `right.z was ${right[2]}`);
+  assert.ok(Math.abs(up[1] - 1) < EPS, `up.y was ${up[1]}`);
+  assert.ok(Math.abs(negDir[2] + 1) < EPS, `-dir.z was ${negDir[2]}`);
+});
+
 test("createViewRotation takes degrees, not radians", () => {
-  const M = createViewRotation(30, 45);
-  const theta_rad = 30 * Math.PI / 180;
-  const phi_rad = 45 * Math.PI / 180;
+  const M = createViewRotation(45, 30);
+  const azimuth_rad = 45 * Math.PI / 180;
+  const elevation_rad = 30 * Math.PI / 180;
   const expected = [
-    -Math.sin(phi_rad),
+    -Math.sin(azimuth_rad),
     0,
-    Math.cos(phi_rad),
+    Math.cos(azimuth_rad),
   ];
   const [right] = basis(M);
   assert.ok(Math.abs(right[0] - expected[0]) < EPS);
   assert.ok(Math.abs(right[1] - expected[1]) < EPS);
   assert.ok(Math.abs(right[2] - expected[2]) < EPS);
   // If the angles were taken as radians this would be wrong by a wide margin.
-  assert.ok(Math.abs(theta_rad - 30) > 1, "sanity: 30 deg is not 30 rad");
+  assert.ok(Math.abs(azimuth_rad - 45) > 1, "sanity: 45 deg is not 45 rad");
+  assert.ok(Math.abs(elevation_rad - 30) > 1, "sanity: 30 deg is not 30 rad");
 });
 
-test("createViewRotation at theta=0, phi=0 gives the expected basis", () => {
-  // Looking down -z: right is +z, up is +y, and the negated view direction
+test("createViewRotation at azimuth=0, elevation=0 gives the expected basis", () => {
+  // Looking along +x: right is +z, up is +y, and the negated view direction
   // is -x.
   const [right, up, negDir] = basis(createViewRotation(0, 0));
   assert.ok(Math.abs(right[0] - 0) < EPS);
@@ -219,28 +287,74 @@ test("createOrthoScale maps the depth range onto [0, 1]", () => {
   assert.ok(Math.abs(apply(S, [0, 0, VDF])[2] - 1) < EPS, "far plane is 1");
 });
 
-test("createOrthoScale ignores its stretch arguments", () => {
-  // CHARACTERISATION, not endorsement. createOrthoScale(sWidth, sHeight)
-  // returns 2/VW and 2/VH regardless of what it is passed, so the
-  // stretchWidth/stretchHeight fields of CameraView currently have no
-  // effect anywhere in the pipeline. The Ch1 table calls for 1.010 / 1.003
-  // on diagonal views, so this is a real gap. It belongs with roadmap
-  // Step 2, where the VIEWS table starts passing those values; fixing it
-  // here would change camera behaviour under cover of a test-only commit.
-  //
-  // When the gap is closed, this test should be deleted and replaced with
-  // one asserting that 1.010 actually narrows the x extent.
-  const a = [...createOrthoScale(1, 1)];
-  const b = [...createOrthoScale(1.010, 1.003)];
-  assert.deepEqual(b, a, "stretch arguments are currently dead parameters");
+test("createOrthoScale stretches the x and y extents independently", () => {
+  const S = createOrthoScale(2, 3);
+  const right = apply(S, [VW / 2, 0, 0]);
+  const up = apply(S, [0, VH / 2, 0]);
+  assert.ok(Math.abs(right[0] - 2) < EPS, `x extent was ${right[0]}`);
+  assert.ok(Math.abs(up[1] - 3) < EPS, `y extent was ${up[1]}`);
+});
+
+test("createOrthoScale leaves the depth mapping alone when stretched", () => {
+  const S = createOrthoScale(2, 3);
+  assert.ok(Math.abs(apply(S, [0, 0, VDN])[2] - 0) < EPS, "near plane is 0");
+  assert.ok(Math.abs(apply(S, [0, 0, VDF])[2] - 1) < EPS, "far plane is 1");
+});
+
+// --- VIEWS -------------------------------------------------------------
+
+test("VIEWS covers the eight compass azimuths in 45-degree steps", () => {
+  assert.equal(VIEWS.length, 8);
+  assert.deepEqual(VIEWS.map((view) => view.azimuth), [0, 45, 90, 135, 180, 225, 270, 315]);
+});
+
+test("VIEWS alternates cardinal and diagonal views", () => {
+  for (let i = 0; i < VIEWS.length; i++) {
+    const expected = i % 2 === 0 ? VIEW_KIND.CARDINAL : VIEW_KIND.DIAGONAL;
+    assert.equal(VIEWS[i].kind, expected, `index ${i}`);
+  }
+});
+
+test("VIEWS gives cardinal views the 30-degree unstretched camera", () => {
+  const cardinals = VIEWS.filter((view) => view.kind === VIEW_KIND.CARDINAL);
+  assert.equal(cardinals.length, 4);
+  for (const view of cardinals) {
+    assert.equal(view.elevation, 30);
+    assert.equal(view.stretchWidth, 1);
+    assert.equal(view.stretchHeight, 1);
+  }
+});
+
+test("VIEWS gives diagonal views the Ch1 camera", () => {
+  const diagonals = VIEWS.filter((view) => view.kind === VIEW_KIND.DIAGONAL);
+  assert.equal(diagonals.length, 4);
+  for (const view of diagonals) {
+    assert.ok(Math.abs(view.elevation - DIAGONAL_ELEVATION) < EPS);
+    assert.equal(view.stretchWidth, DIAGONAL_STRETCH_X);
+    assert.equal(view.stretchHeight, DIAGONAL_STRETCH_Y);
+  }
+
+  // Rounded Ch1 table values: these anchor the exact constants to the wiki.
+  assert.ok(
+    Math.abs(DIAGONAL_ELEVATION - 30.25) < 0.01,
+    `elevation was ${DIAGONAL_ELEVATION}`,
+  );
+  assert.ok(
+    Math.abs(DIAGONAL_STRETCH_X - 1.01015) < 1e-5,
+    `s_x was ${DIAGONAL_STRETCH_X}`,
+  );
+  assert.ok(
+    Math.abs(DIAGONAL_STRETCH_Y - 1.00255) < 1e-5,
+    `s_y was ${DIAGONAL_STRETCH_Y}`,
+  );
 });
 
 // --- createCamera ------------------------------------------------------
 
 const CANONICAL_VIEW = {
   center: new Float32Array([0.5, 0, 0.5 + 0.1]),
-  theta: 30,
-  phi: 45,
+  azimuth: 45,
+  elevation: 30,
   stretchWidth: 1,
   stretchHeight: 1,
 };
@@ -251,13 +365,13 @@ test("createCamera reproduces the golden matrix for the canonical view", () => {
   // multiply order (scale * view * translation) and the trailing ftz pass are
   // both load-bearing for texel-exactness: reassociating this arithmetic
   // would still be a valid camera and would still look right, but would move
-  // texels and change the snapshot hash. These are the values the recorded
-  // baseline c8f95a5d depends on.
+  // texels. These are the values for the 180x150 scene buffer; the centred
+  // 160x120 crop should still fingerprint c8f95a5d.
   //
   // Transposed for readability - matMul stores column-major.
   const expected = [
-    -0.1237436830997467, 0.0, 0.1237436830997467, -0.01237437129020691,
-    0.0824957937002182, 0.2020726054906845, 0.0824957937002182, -0.09074537456035614,
+    -0.10999438911676407, 0.0, 0.10999438911676407, -0.010999441146850586,
+    0.06599663197994232, 0.16165807843208313, 0.06599663197994232, -0.07259629666805267,
     -0.0030618621967732906, 0.0024999999441206455, -0.0030618621967732906, 0.5033680200576782,
     0.0, 0.0, 0.0, 1.0,
   ];
@@ -291,22 +405,291 @@ test("createCamera is deterministic", () => {
 const toBufferPx = (C, p) => {
   const o = apply(C, p);
   return [
-    (o[0] / o[3] * 0.5 + 0.5) * SCREEN_WIDTH,
-    (1 - (o[1] / o[3] * 0.5 + 0.5)) * SCREEN_HEIGHT,
+    (o[0] / o[3] * 0.5 + 0.5) * BUFFER_WIDTH,
+    (1 - (o[1] / o[3] * 0.5 + 0.5)) * BUFFER_HEIGHT,
   ];
 };
 
-test("the off-constraint centre shifts the image less than its world size", () => {
-  // The roadmap describes this centre as "0.6 wu = 8.4 px" off-constraint.
-  // That 8.4 px is 0.6 world units at 14 px/wu — an absolute distance, not a
-  // screen displacement. The gridline the diamond is actually symmetric
-  // about is z = 0.5, so the offset is 0.1 wu, and once projected it is
-  // foreshortened: the z axis is not perpendicular to the view, so 0.1 wu
-  // moves the image about 1.1 px on screen, not 1.4.
-  //
-  // Both readings agree the centre is off-constraint. Which one matters for
-  // Step 2 depends on where the constraint grid is anchored, so the measured
-  // value is pinned here and the roadmap wording is left alone.
+// The ground-plane offset produced by one world step, relative to the origin,
+// with the camera centred on the origin.
+const groundOffset = (view, x, z) => {
+  const C = createCamera({ ...view, center: new Float32Array([0, 0, 0]) });
+  const origin = toBufferPx(C, [0, 0, 0]);
+  const point = toBufferPx(C, [x, 0, z]);
+  return [point[0] - origin[0], point[1] - origin[1]];
+};
+
+test("every view maps the integer ground grid to integer buffer pixels", () => {
+  // The ground-plane map is integral: integer world steps land on integer
+  // buffer pixels relative to an integer camera centre. That is what makes
+  // either snap parity reachable; snapCamera adds the half-pixel offset for
+  // diagonal views. It fails immediately if the exact stretch drifts.
+  for (const view of VIEWS) {
+    for (let x = -3; x <= 3; x++) {
+      for (let z = -3; z <= 3; z++) {
+        const [px, py] = groundOffset(view, x, z);
+        assert.ok(
+          Math.abs(px - Math.round(px)) < 1e-4,
+          `azimuth ${view.azimuth} (${x},${z}) x was ${px}`,
+        );
+        assert.ok(
+          Math.abs(py - Math.round(py)) < 1e-4,
+          `azimuth ${view.azimuth} (${x},${z}) y was ${py}`,
+        );
+      }
+    }
+  }
+});
+
+test("cardinal views project unit ground steps to 14x7 pixels", () => {
+  const close = (a, b) => Math.abs(a - b) < 1e-3;
+  const isStep = (step, x, y) => close(Math.abs(step[0]), x) && close(Math.abs(step[1]), y);
+
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.CARDINAL)) {
+    const xStep = groundOffset(view, 1, 0);
+    const zStep = groundOffset(view, 0, 1);
+    assert.ok(
+      (isStep(xStep, 0, 7) && isStep(zStep, 14, 0)) ||
+      (isStep(xStep, 14, 0) && isStep(zStep, 0, 7)),
+      `azimuth ${view.azimuth}: x=${xStep}, z=${zStep}`,
+    );
+  }
+
+  // Pin the orientation once, so a rotated-but-valid basis cannot slip by.
+  const az0 = VIEWS.find((v) => v.azimuth === 0);
+  assert.ok(az0, "azimuth 0 is in VIEWS");
+  const xStep = groundOffset(az0, 1, 0);
+  const zStep = groundOffset(az0, 0, 1);
+  assert.ok(close(xStep[0], 0) && close(xStep[1], -7), `x step was ${xStep}`);
+  assert.ok(close(zStep[0], 14) && close(zStep[1], 0), `z step was ${zStep}`);
+});
+
+test("diagonal views project unit ground steps to 10x5 pixels", () => {
+  const close = (a, b) => Math.abs(a - b) < 1e-3;
+  const hasMagnitudes = (step, x, y) => {
+    const mags = [Math.abs(step[0]), Math.abs(step[1])].sort((a, b) => a - b);
+    return close(mags[0], x) && close(mags[1], y);
+  };
+
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.DIAGONAL)) {
+    const xStep = groundOffset(view, 1, 0);
+    const zStep = groundOffset(view, 0, 1);
+    assert.ok(hasMagnitudes(xStep, 5, 10), `azimuth ${view.azimuth} x=${xStep}`);
+    assert.ok(hasMagnitudes(zStep, 5, 10), `azimuth ${view.azimuth} z=${zStep}`);
+  }
+
+  // Pin the orientation once.
+  const az45 = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(az45, "azimuth 45 is in VIEWS");
+  const xStep = groundOffset(az45, 1, 0);
+  const zStep = groundOffset(az45, 0, 1);
+  assert.ok(close(xStep[0], -10) && close(xStep[1], -5), `x step was ${xStep}`);
+  assert.ok(close(zStep[0], 10) && close(zStep[1], -5), `z step was ${zStep}`);
+});
+
+// --- snapCamera --------------------------------------------------------
+
+const closeTo = (a, b, tolerance = 1e-4) => Math.abs(a - b) < tolerance;
+const isInteger = (v) => closeTo(v, Math.round(v));
+const isHalfInteger = (v) => closeTo(v - 0.5, Math.round(v - 0.5));
+const snappedGrid = (view, renderPos) => groundOffset(view, renderPos[0], renderPos[2]);
+
+test("snapCamera puts the diagonal camera on half-pixel rows", () => {
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.DIAGONAL)) {
+    const { renderPos } = snapCamera(view, [0.5, 0, 0.5]);
+    const [mx, my] = snappedGrid(view, renderPos);
+    assert.ok(isInteger(mx), `azimuth ${view.azimuth} x was ${mx}`);
+    assert.ok(isHalfInteger(my), `azimuth ${view.azimuth} y was ${my}`);
+  }
+});
+
+test("snapCamera puts the cardinal camera on whole pixels", () => {
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.CARDINAL)) {
+    const { renderPos } = snapCamera(view, [0.5, 0, 0.5]);
+    const [mx, my] = snappedGrid(view, renderPos);
+    assert.ok(isInteger(mx), `azimuth ${view.azimuth} x was ${mx}`);
+    assert.ok(isInteger(my), `azimuth ${view.azimuth} y was ${my}`);
+  }
+});
+
+test("snapCamera returns the sub-pixel remainder as cropOffset", () => {
+  const targets = [[0.5, 0, 0.5], [0.5, 0, 0.6], [0.52, 0, 0.52]];
+  for (const view of VIEWS) {
+    for (const target of targets) {
+      const { renderPos, cropOffset } = snapCamera(view, target);
+      assert.ok(Math.abs(cropOffset.x) <= 0.5 + EPS, `crop.x was ${cropOffset.x}`);
+      assert.ok(Math.abs(cropOffset.y) <= 0.5 + EPS, `crop.y was ${cropOffset.y}`);
+
+      const expected = groundOffset(
+        view,
+        target[0] - renderPos[0],
+        target[2] - renderPos[2],
+      );
+      assert.ok(
+        closeTo(cropOffset.x, expected[0]),
+        `azimuth ${view.azimuth} crop.x ${cropOffset.x} vs ${expected[0]}`,
+      );
+      assert.ok(
+        closeTo(cropOffset.y, expected[1]),
+        `azimuth ${view.azimuth} crop.y ${cropOffset.y} vs ${expected[1]}`,
+      );
+    }
+  }
+
+  // Pin one nonzero remainder, away from a half-pixel snap boundary.
+  const diagonal = VIEWS.find((v) => v.azimuth === 45);
+  const { cropOffset } = snapCamera(diagonal, [0.52, 0, 0.52]);
+  assert.ok(closeTo(cropOffset.x, 0), `crop.x was ${cropOffset.x}`);
+  assert.ok(closeTo(cropOffset.y, 0.3), `crop.y was ${cropOffset.y}`);
+});
+
+test("snapCamera is idempotent", () => {
+  for (const view of VIEWS) {
+    for (const target of [[0.5, 0, 0.5], [0.5, 0, 0.6], [0.1, 0, 0.9]]) {
+      const first = snapCamera(view, target);
+      const second = snapCamera(view, first.renderPos);
+      for (let i = 0; i < 3; i++) {
+        assert.ok(
+          closeTo(first.renderPos[i], second.renderPos[i]),
+          `azimuth ${view.azimuth} component ${i}`,
+        );
+      }
+      assert.ok(closeTo(second.cropOffset.x, 0), `second crop.x was ${second.cropOffset.x}`);
+      assert.ok(closeTo(second.cropOffset.y, 0), `second crop.y was ${second.cropOffset.y}`);
+    }
+  }
+});
+
+test("targets in the same snap cell share renderPos", () => {
+  const cases = [
+    {
+      view: VIEWS.find((v) => v.azimuth === 45),
+      a: [0.52, 0, 0.52],
+      b: [0.51, 0, 0.51],
+      ca: [0, 0.3],
+      cb: [0, 0.4],
+    },
+    {
+      view: VIEWS.find((v) => v.azimuth === 0),
+      a: [0.52, 0, 0.52],
+      b: [0.51, 0, 0.51],
+      ca: [0.28, 0.36],
+      cb: [0.14, 0.43],
+    },
+  ];
+
+  for (const { view, a, b, ca, cb } of cases) {
+    const first = snapCamera(view, a);
+    const second = snapCamera(view, b);
+    for (let i = 0; i < 3; i++) {
+      assert.ok(
+        closeTo(first.renderPos[i], second.renderPos[i]),
+        `azimuth ${view.azimuth} component ${i}`,
+      );
+    }
+    assert.ok(closeTo(first.cropOffset.x, ca[0]), `first crop.x was ${first.cropOffset.x}`);
+    assert.ok(closeTo(first.cropOffset.y, ca[1]), `first crop.y was ${first.cropOffset.y}`);
+    assert.ok(closeTo(second.cropOffset.x, cb[0]), `second crop.x was ${second.cropOffset.x}`);
+    assert.ok(closeTo(second.cropOffset.y, cb[1]), `second crop.y was ${second.cropOffset.y}`);
+  }
+});
+
+test("snapCamera ignores target y", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  const flat = snapCamera(view, [0.5, 0, 0.5]);
+  const raised = snapCamera(view, [0.5, 7, 0.5]);
+
+  assert.equal(raised.renderPos[1], 0);
+  for (let i = 0; i < 3; i++) {
+    assert.ok(closeTo(flat.renderPos[i], raised.renderPos[i]), `component ${i}`);
+  }
+  assert.ok(closeTo(flat.cropOffset.x, raised.cropOffset.x));
+  assert.ok(closeTo(flat.cropOffset.y, raised.cropOffset.y));
+});
+
+// --- placeCamera -------------------------------------------------------
+
+test("placeCamera centres the visible window on the snap remainder", () => {
+  for (const view of VIEWS) {
+    const target = [0.5, 0, 0.5];
+    const snap = snapCamera(view, target);
+    const placed = placeCamera(view, target);
+
+    for (let i = 0; i < 3; i++) {
+      assert.ok(
+        closeTo(placed.cameraView.center[i], snap.renderPos[i]),
+        `azimuth ${view.azimuth} centre ${i}`,
+      );
+    }
+    assert.equal(placed.cameraView.azimuth, view.azimuth);
+    assert.equal(placed.cameraView.elevation, view.elevation);
+    assert.equal(placed.cameraView.stretchWidth, view.stretchWidth);
+    assert.equal(placed.cameraView.stretchHeight, view.stretchHeight);
+
+    assert.ok(closeTo(placed.cropOffset.x, snap.cropOffset.x));
+    assert.ok(closeTo(placed.cropOffset.y, snap.cropOffset.y));
+
+    const expected = createWindowRect(
+      CROP_ORIGIN_X + snap.cropOffset.x,
+      CROP_ORIGIN_Y + snap.cropOffset.y,
+    );
+    for (let i = 0; i < 4; i++) {
+      assert.ok(
+        closeTo(placed.windowRect[i], expected[i]),
+        `azimuth ${view.azimuth} rect ${i}`,
+      );
+    }
+  }
+});
+
+test("placeCamera moves the window in the same direction as the snap remainder", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(view, "azimuth 45 is in VIEWS");
+
+  const placed = placeCamera(view, [0.5, 0, 0.5]);
+  assert.ok(closeTo(placed.cropOffset.x, 0));
+  assert.ok(closeTo(placed.cropOffset.y, -0.5));
+  assert.ok(closeTo(placed.windowRect[0], CROP_ORIGIN_X / BUFFER_WIDTH));
+  assert.ok(closeTo(placed.windowRect[1], (CROP_ORIGIN_Y - 0.5) / BUFFER_HEIGHT));
+  assert.ok(closeTo(placed.windowRect[2], SCREEN_WIDTH / BUFFER_WIDTH));
+  assert.ok(closeTo(placed.windowRect[3], SCREEN_HEIGHT / BUFFER_HEIGHT));
+});
+
+test("placeCamera follows the snapped camera, not the raw target", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(view, "azimuth 45 is in VIEWS");
+
+  const a = placeCamera(view, [0.52, 0, 0.52]);
+  const b = placeCamera(view, [0.51, 0, 0.51]);
+  for (let i = 0; i < 3; i++) {
+    assert.ok(closeTo(a.cameraView.center[i], b.cameraView.center[i]), `centre ${i}`);
+  }
+  assert.ok(closeTo(a.cropOffset.y, 0.3));
+  assert.ok(closeTo(b.cropOffset.y, 0.4));
+  assert.ok(closeTo(a.windowRect[0], b.windowRect[0]));
+  assert.ok(closeTo(a.windowRect[1] - b.windowRect[1], -0.1 / BUFFER_HEIGHT));
+});
+
+test("placeCamera leaves the window centred when the target is already on the grid", () => {
+  const view = VIEWS.find((v) => v.azimuth === 45);
+  assert.ok(view, "azimuth 45 is in VIEWS");
+
+  const placed = placeCamera(view, [0.5, 0, 0.6]);
+  assert.ok(closeTo(placed.cropOffset.x, 0));
+  assert.ok(closeTo(placed.cropOffset.y, 0));
+
+  const expected = createWindowRect(CROP_ORIGIN_X, CROP_ORIGIN_Y);
+  for (let i = 0; i < 4; i++) {
+    assert.ok(closeTo(placed.windowRect[i], expected[i]), `rect ${i}`);
+  }
+});
+
+test("the 9-row and 10-row centres differ by less than a world unit", () => {
+  // z = 0.5 puts the diamond centre on an integer row (10-row parity);
+  // z = 0.6 puts it on a half-integer row (9-row parity, the tiling target).
+  // Both are valid camera positions. The 0.1 wu offset is foreshortened on
+  // screen: the z axis is not perpendicular to the view, so it moves the
+  // image about 1.1 px, not 1.4.
   const onGrid = createCamera({ ...CANONICAL_VIEW, center: new Float32Array([0.5, 0, 0.5]) });
   const offGrid = createCamera(CANONICAL_VIEW);
 
@@ -315,11 +698,11 @@ test("the off-constraint centre shifts the image less than its world size", () =
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
 
-  // The off-grid centre puts the quad's near corner to the *left* of where the
-  // on-grid centre puts it, and lower on screen.
+  // The 9-row centre puts the quad's near corner to the *left* of the
+  // 10-row centre, and lower on screen.
   assert.ok(Math.abs(dx + 0.98995) < 1e-4, `dx was ${dx}`);
   assert.ok(Math.abs(dy - 0.49500) < 1e-4, `dy was ${dy}`);  // Less than the naive 0.1 * 14 = 1.4 px, because the z axis is
-  // foreshortened at phi=45, theta=30.
+  // foreshortened at azimuth=45, elevation=30.
   assert.ok(Math.hypot(dx, dy) < 0.1 * PIX_WU, "screen shift is under the naive figure");
 });
 
@@ -340,18 +723,18 @@ const quadCoverage = (C) => {
   };
   let n = 0;
   const rows = [];
-  for (let y = 0; y < SCREEN_HEIGHT; y++) {
+  for (let y = 0; y < BUFFER_HEIGHT; y++) {
     let w = 0;
-    for (let x = 0; x < SCREEN_WIDTH; x++) if (inside(x + 0.5, y + 0.5)) { n++; w++; }
+    for (let x = 0; x < BUFFER_WIDTH; x++) if (inside(x + 0.5, y + 0.5)) { n++; w++; }
     if (w > 0) rows.push(w);
   }
   return { n, rows: rows.join(","), rowCount: rows.length };
 };
 
-test("the off-constraint centre rasterizes 9 rows, the on-grid one 10", () => {
-  // This is the finding that made rowWidths part of the snapshot
-  // fingerprint. Both cover 100 pixels — the area is conserved while the
-  // shape changes — so a non-black count alone could not tell them apart.
+test("the two diagonal parities rasterize 9 and 10 rows", () => {
+  // The 9-row shape is the tiling target; the 10-row shape is the other
+  // parity. Both cover 100 pixels — the area is conserved while the shape
+  // changes — so a non-black count alone could not tell them apart.
   const offGrid = quadCoverage(createCamera(CANONICAL_VIEW));
   assert.equal(offGrid.n, 100);
   assert.equal(offGrid.rows, "4,8,12,16,20,16,12,8,4");
@@ -363,4 +746,24 @@ test("the off-constraint centre rasterizes 9 rows, the on-grid one 10", () => {
   assert.equal(onGrid.n, 100);
   assert.equal(onGrid.rowCount, 10);
   assert.equal(onGrid.rows, "2,6,10,14,18,18,14,10,6,2");
+});
+
+test("every diagonal view snaps to the 9-row diamond", () => {
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.DIAGONAL)) {
+    const { renderPos } = snapCamera(view, [0.5, 0, 0.5]);
+    const coverage = quadCoverage(createCamera({ ...view, center: renderPos }));
+    assert.equal(coverage.n, 100, `azimuth ${view.azimuth}`);
+    assert.equal(coverage.rowCount, 9, `azimuth ${view.azimuth}`);
+    assert.equal(coverage.rows, "4,8,12,16,20,16,12,8,4", `azimuth ${view.azimuth}`);
+  }
+});
+
+test("every cardinal view snaps to the 14x7 rectangle", () => {
+  for (const view of VIEWS.filter((v) => v.kind === VIEW_KIND.CARDINAL)) {
+    const { renderPos } = snapCamera(view, [0.5, 0, 0.5]);
+    const coverage = quadCoverage(createCamera({ ...view, center: renderPos }));
+    assert.equal(coverage.n, 98, `azimuth ${view.azimuth}`);
+    assert.equal(coverage.rowCount, 7, `azimuth ${view.azimuth}`);
+    assert.equal(coverage.rows, "14,14,14,14,14,14,14", `azimuth ${view.azimuth}`);
+  }
 });

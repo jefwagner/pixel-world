@@ -17,7 +17,13 @@
 import {
   SCREEN_WIDTH,
   SCREEN_HEIGHT,
+  BUFFER_WIDTH,
+  BUFFER_HEIGHT,
+  CROP_ORIGIN_X,
+  CROP_ORIGIN_Y,
   createCamera,
+  placeCamera,
+  VIEWS,
 } from './projection.mjs';
 
 import {
@@ -39,23 +45,25 @@ const state = {
   scene: null,
   present: null,
 
-  // The quad sits on the xz plane (y = 0), so `center[1]` is always 0.
-  // The z of 0.6 is deliberately off the 0.5 gridline — the diamond
-  // rasterizes 9 rows rather than 10, which makes the asymmetry visible.
-  cameraView: {
-    center: new Float32Array([0.5, 0, 0.5 + 0.1]),
-    theta: 30,
-    phi: 45,
-    stretchWidth: 1,
-    stretchHeight: 1,
-  },
+  // Continuous camera target in world space. The camera itself is snapped
+  // each frame; this target stays continuous so the crop absorbs the
+  // sub-pixel remainder.
+  viewTarget: new Float32Array([0.5, 0, 0.5 + 0.1]),
+
+  // Index into VIEWS; starts on the diagonal azimuth 45.
+  viewIndex: 1,
+
+  // Derived each frame by placeCamera().
+  cameraView: null,
+  cropOffset: { x: 0, y: 0 },
 };
 
 // Read the internal scene texture back to the CPU as tightly-packed RGBA.
 //
-// copyTextureToBuffer requires bytesPerRow to be a multiple of 256; at 160px
-// RGBA that is 768, not 640, so each row comes back with 128 bytes of padding
-// that must be stripped or the image shears diagonally.
+// copyTextureToBuffer requires bytesPerRow to be a multiple of 256. At the
+// 180px buffer width the RGBA row is 720 bytes, rounded up to 768, so each row
+// comes back with 48 bytes of padding that must be stripped or the image
+// shears diagonally. The 160px window is 640 bytes, padded to 768 likewise.
 //
 // The copy is submitted after whatever frames the render loop has already
 // queued, so the result reflects the most recently *submitted* frame — at
@@ -69,7 +77,7 @@ const state = {
 // @param {string} format             the texture's format, e.g. 'bgra8unorm'
 // @returns {Promise<{width: number, height: number, format: string,
 //                    data: Uint8Array}>}
-async function snapshotBuffer(device, sceneTexture, width, height, format) {
+async function snapshotBuffer(device, sceneTexture, width, height, format, origin = { x: 0, y: 0 }) {
   const bytesPerRow = bytesPerRowAligned(width, 4);
   const readback = device.createBuffer({
     size: bytesPerRow * height,
@@ -78,7 +86,7 @@ async function snapshotBuffer(device, sceneTexture, width, height, format) {
 
   const encoder = device.createCommandEncoder();
   encoder.copyTextureToBuffer(
-    { texture: sceneTexture },
+    { texture: sceneTexture, origin },
     { buffer: readback, bytesPerRow },
     [width, height, 1],
   );
@@ -95,21 +103,37 @@ async function snapshotBuffer(device, sceneTexture, width, height, format) {
 
 // Read back the current frame and return its fingerprint.
 //
-// Logs one line, caches the result on window.lastSnapshot, and resolves to
-// the summary object so verification is a single expression:
+// By default this snapshots the full internal buffer. Pass `{ window: true }`
+// to fingerprint only the visible 160x120 crop, which is the way to check
+// that the larger buffer did not change the presented image:
 //
-//   (await snapshot()).hash === 'c8f95a5d'
+//   (await snapshot({ window: true })).hash === 'c8f95a5d'
 //
+// The crop origin is rounded to whole buffer pixels for the copy; fractional
+// snap offsets are a present-pass concern, not a readback one. The initial
+// on-grid target keeps the origin whole, so its window snapshot is exact.
+//
+// @param {{window?: boolean}} [options]
 // @returns {Promise<{nonBlack: number, total: number, rowWidths: string,
 //                    hash: string}>}
-async function snapshot() {
+async function snapshot({ window: visibleWindow = false } = {}) {
+  const width = visibleWindow ? SCREEN_WIDTH : BUFFER_WIDTH;
+  const height = visibleWindow ? SCREEN_HEIGHT : BUFFER_HEIGHT;
+  const origin = visibleWindow
+    ? {
+        x: Math.round(CROP_ORIGIN_X + state.cropOffset.x),
+        y: Math.round(CROP_ORIGIN_Y + state.cropOffset.y),
+      }
+    : { x: 0, y: 0 };
+
   const snap = await snapshotBuffer(
-    state.device, state.sceneTexture, SCREEN_WIDTH, SCREEN_HEIGHT, state.format,
+    state.device, state.sceneTexture, width, height, state.format, origin,
   );
   const s = summarise(snap);
   window.lastSnapshot = s;
   console.log(
-    `[snapshot] nonBlack=${s.nonBlack}/${s.total} ` +
+    `[snapshot${visibleWindow ? ':window' : ''}] ` +
+    `nonBlack=${s.nonBlack}/${s.total} ` +
     `rowWidths=${s.rowWidths} hash=${s.hash}`,
   );
   return s;
@@ -166,9 +190,8 @@ async function createAssets(device) {
   return { imageBitmap, shaderModule };
 }
 
-// The internal low-res render target. Larger than the visible window in
-// future (roadmap Step 2 adds a crop margin), which is why its size and the
-// window size are kept distinct here even though they match today.
+// The internal low-res render target. Larger than the visible window in both
+// axes, so the crop window can slide without re-rasterising the scene.
 //
 // COPY_SRC is required for snapshotBuffer(); it is not a present-only target.
 //
@@ -178,7 +201,7 @@ async function createAssets(device) {
 function createSceneTexture(device, format) {
   console.log("Create low-res canvas");
   return device.createTexture({
-    size: [SCREEN_WIDTH, SCREEN_HEIGHT],
+    size: [BUFFER_WIDTH, BUFFER_HEIGHT],
     format: format,
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
            GPUTextureUsage.COPY_SRC,
@@ -351,11 +374,22 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
 function createPresentResources(device, assets, format, sceneTextureView, sampler) {
   const { shaderModule } = assets;
 
+  // [originU, originV, sizeU, sizeV], rewritten each frame as the crop moves.
+  const windowBuffer = device.createBuffer({
+    size: 4 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
   console.log("Creating presentation bindgroup layout");
   const presentBindGroupLayout = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: 'uniform' },
+      },
     ]
   });
   const presentBindGroup = device.createBindGroup({
@@ -363,6 +397,7 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
     entries: [
       { binding: 0, resource: sampler },
       { binding: 1, resource: sceneTextureView },
+      { binding: 2, resource: { buffer: windowBuffer } },
     ],
   });
 
@@ -388,19 +423,27 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
     },
   });
 
-  return { pipeline: presentPipeline, bindGroup: presentBindGroup };
+  return {
+    pipeline: presentPipeline,
+    bindGroup: presentBindGroup,
+    windowBuffer,
+  };
 }
 
 // Encode and submit exactly one frame: the scene pass into the internal
 // buffer, then the present pass from that buffer to the canvas.
 //
 // The camera matrix is recomputed and re-uploaded every frame rather than
-// cached. At this scale that is free, and it means edits to state.cameraView
-// take effect on the next frame with no invalidation step — which is what
-// roadmap Step 2's view switching and Step 6's camera follow will want.
+// cached. At this scale that is free, and it means edits to viewIndex or
+// viewTarget take effect on the next frame with no invalidation step.
 function renderFrame() {
+  const placed = placeCamera(VIEWS[state.viewIndex], state.viewTarget);
+  state.cameraView = placed.cameraView;
+  state.cropOffset = placed.cropOffset;
+
   const cameraMatrix = createCamera(state.cameraView);
   state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
+  state.device.queue.writeBuffer(state.present.windowBuffer, 0, placed.windowRect);
 
   // There can be no async calls between getting the canvas texture and
   // queueing the commands.
@@ -417,7 +460,7 @@ function renderFrame() {
       storeOp: 'store',
     }]
   });
-  scenePassEncoder.setViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 1);
+  scenePassEncoder.setViewport(0, 0, BUFFER_WIDTH, BUFFER_HEIGHT, 0, 1);
   scenePassEncoder.setVertexBuffer(0, state.scene.vertexBuffer);
   scenePassEncoder.setIndexBuffer(state.scene.indexBuffer, 'uint16');
   scenePassEncoder.setPipeline(state.scene.pipeline);
@@ -451,6 +494,41 @@ function startRenderLoop() {
   });
 }
 
+// Debug controls. V cycles the eight views. Arrows nudge the continuous view
+// target (Shift = quarter step), so the camera snaps at cell boundaries while
+// the crop window slides continuously.
+function installViewDebugKeys() {
+  window.addEventListener('keydown', (event) => {
+    if (event.key.toLowerCase() === 'v') {
+      state.viewIndex = (state.viewIndex + 1) % VIEWS.length;
+      const view = VIEWS[state.viewIndex];
+      console.log(
+        `[view] index=${state.viewIndex} azimuth=${view.azimuth} kind=${view.kind}`,
+      );
+      return;
+    }
+
+    const step = event.shiftKey ? 0.0025 : 0.01;
+    let dx = 0;
+    let dz = 0;
+
+    switch (event.key) {
+      case 'ArrowLeft':  dx = -step; break;
+      case 'ArrowRight': dx = step;  break;
+      case 'ArrowUp':    dz = -step; break;
+      case 'ArrowDown':  dz = step;  break;
+      default: return;
+    }
+
+    event.preventDefault();
+    state.viewTarget[0] += dx;
+    state.viewTarget[2] += dz;
+    console.log(
+      `[target] x=${state.viewTarget[0].toFixed(3)} z=${state.viewTarget[2].toFixed(3)}`,
+    );
+  });
+}
+
 // Create the canvas we will be working with
 console.log("Creating canvas");
 const demoDiv = document.getElementById("demo");
@@ -481,16 +559,20 @@ async function init() {
     state.device, assets, state.format, state.sceneTextureView, state.scene.sampler,
   );
 
+  installViewDebugKeys();
+
   console.log("Init complete");
 }
 
 init()
   .then(async () => {
     // Render one frame and fingerprint it, so the console opens with the
-    // baseline the todo.md verification refers to. Then hand over to the
-    // loop, which renders continuously from here on.
+    // baseline the todo.md verification refers to. Log both the full buffer
+    // and the visible crop; the latter is the one that should still match the
+    // old 160x120 baseline. Then hand over to the loop.
     renderFrame();
     await snapshot();
+    await snapshot({ window: true });
     startRenderLoop();
   })
   .catch((err) => {
