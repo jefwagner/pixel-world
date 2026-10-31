@@ -57,21 +57,30 @@ instancing are Step 4; input and camera follow are Step 6.
   Add a pure function returning `{ renderPos, cropOffset }`, and pin the snap
   contract with tests.
 
-  - Snap the camera centre `c` so its ground-plane projection is an integer
-    buffer pixel: `M·c ∈ Z²`, where `M` is the 2×2 world-(x,z)→buffer-px map of
-    the view. Then `cropOffset = M·(target − c)`, which is sub-pixel
-    (each component ≤ 0.5 px).
-  - This reproduces the known case: target `[0.5, 0, 0.6]` on the diagonal view
-    yields a snapped `renderPos` whose rasterisation is the symmetric 10-row
-    diamond, while the unsnapped target rasterises 9 rows.
+  - Work in buffer-pixel coordinates with the convention the renderer already
+    uses: pixel centres at half-integers, pixel edges at integers.
+  - Snap the camera centre `c` so `M·c` has the view's parity: cardinal
+    `(integer, integer)`; diagonal `(integer, half-integer)`. The half-integer
+    y is what puts the diamond's horizontal diagonal on a pixel centre and its
+    vertical diagonal on a pixel edge, giving the clean 9-row
+    `4,8,12,16,20,16,12,8,4` tiling. An integer y gives the 10-row
+    `2,6,10,14,18,18,14,10,6,2` shape, which shows seam slivers when tiled.
+  - `cropOffset = M·(target − c)`, sub-pixel (each component ≤ 0.5 px).
   - Keep the constraint in world units but document the pixel derivation in a
     comment — the 14× factor is the classic bug.
+  - The map is `M = [[14·s_x·right.x, 14·s_x·right.z],
+    [−14·s_y·up.x, −14·s_y·up.z]]`; invert it to recover the world offset.
+  - Rename the existing "off-grid/on-grid" projection tests: under this
+    contract the 9-row centre is the tiling target, not the off-grid case.
 
-  **Acceptance:** for all 8 views, `M·renderPos` is integer within float32
-  tolerance and `|cropOffset| ≤ 0.5 px`; snapping is idempotent
+  **Acceptance:** for all 8 views, `M·renderPos` is integer x and, for
+  diagonal views, half-integer y (cardinal both integer) within float32
+  tolerance; `|cropOffset| ≤ 0.5 px`; snapping is idempotent
   (`snapCamera(view, renderPos)` returns the same `renderPos`, zero crop); two
-  targets inside one grid cell share `renderPos` but differ in `cropOffset`;
-  the browser hash is still `c8f95a5d` (nothing is wired up yet).
+  targets inside one grid cell share `renderPos` but differ in `cropOffset`; a
+  diagonal snapped camera rasterises the 9-row `4,8,12,16,20,16,12,8,4`
+  diamond and a cardinal one the 7-row 14×7 rectangle; the browser hash is
+  still `c8f95a5d` (nothing is wired up yet).
 
 - [ ] **3. Enlarge the internal buffer and make the present pass crop-aware**
 
@@ -111,8 +120,8 @@ instancing are Step 4; input and camera follow are Step 6.
   - Record the per-view snapshot fingerprints (or at least `rowWidths`) in this
     file.
 
-  **Acceptance:** all 8 azimuths render; diagonal views show the symmetric
-  `2,6,10,14,18,18,14,10,6,2` diamond and cardinal views the 14×7 rectangle;
+  **Acceptance:** all 8 azimuths render; diagonal views show the
+  `4,8,12,16,20,16,12,8,4` diamond and cardinal views the 14×7 rectangle;
   the tile rasterisation is identical at every snapped position; a target
   nudged within a grid cell changes only the crop, not the tile pattern.
 
@@ -124,9 +133,16 @@ instancing are Step 4; input and camera follow are Step 6.
 - **Exact stretch beats the rounded table.** With `s_x = 5√2/7` and the Ch1
   `s_y`, the diagonal ground-plane map is `[[−10, 10], [−5, −5]]` px/wu exactly.
   The rounded table values leave ~0.000025 px/wu of drift.
-- **The snap contract is uniform.** Because `M` maps integer world steps to
-  integer pixels in both view kinds, `M·c ∈ Z²` is the whole constraint; the
-  cardinal/diagonal distinction only matters for texture selection in Step 3.
+- **The snap parity is view-dependent.** Cardinal: `M·c ∈ Z²`. Diagonal:
+  `M·c ∈ Z × (Z+½)`. The half-pixel y offset is what selects the 9-row
+  `4,8,...,4` diamond that tiles cleanly; an integer y gives the 10-row
+  `2,6,...,2` shape that leaves seam slivers. In the old test language,
+  `[0.5, 0, 0.5]` is the 10-row case and `[0.5, 0, 0.6]` was already the
+  9-row case — the labels were backwards relative to the tiling goal.
+- **The ground-plane map is integral.** With the exact stretch, `M` maps
+  integer world steps to integer buffer pixels. That is what makes either
+  parity reachable; the snap chooses which one by shifting `c` by half a
+  buffer pixel in the relevant axis.
 - **The buffer margin is for the window, not the snap.** `cropOffset` is
   sub-pixel, so the 15 px margin is headroom for crop nudging and later view
   transitions, not a requirement of the snap itself.
