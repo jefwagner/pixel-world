@@ -116,15 +116,22 @@ The container is the security boundary, and it is worth knowing what it does:
 |---|---|
 | `~/.ssh/id_ed25519` | your personal key — reaches **every** repo you own, including the wiki |
 | `ssh`, `scp`, `sftp`, `ssh-agent`, `rsync` | with no ssh binary, git has **no SSH transport at all** and cannot fall back to the key |
-| the `jefscad` PAT, the lab bot credential | one credential only: the pixel-world PAT, mounted read-only |
-| `~/.aws`, `~/.azure`, host tool dir | — |
+| the `jefscad` PAT | the git credential is the pixel-world PAT alone, mounted read-only |
+| `~/.aws`, `~/.azure`, host tool dir, the rest of `~/.config/lab-bot` | — |
 | write access to `~/tools/llm-instructions/` | the agent cannot edit the rules it is working under |
+
+Two credentials are mounted, not one: the pixel-world PAT for git, and the
+lab-bot OpenRouter key (`~/.config/lab-bot/pi-auth.json`) that model calls go
+out on. The second is agent-scoped — **every agent capable of unsupervised runs
+shares it**, and its spend limit lives at OpenRouter, not here, so an overrun
+eats the other agents' budget rather than running unbounded.
 
 Plus `--cap-drop=ALL` and `--security-opt=no-new-privileges`.
 
-The practical result: **the worst realistic outcome of a bad unattended run is
-junk commits and branches inside pixel-world.** Nothing outside this repository
-is reachable from inside the container.
+The practical result: nothing outside this repository is **modifiable**, and the
+worst realistic outcome of a bad unattended run is **junk commits and branches
+inside pixel-world** — plus spend on the shared key and any mail it sends, which
+are the two ways content or money leaves the container.
 
 The one thing to understand before changing anything: the `.devcontainer/`
 mount list is short *on purpose*. Every mount is a hole in the boundary. The

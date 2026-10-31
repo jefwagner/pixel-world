@@ -130,9 +130,11 @@ independently — e.g. an overnight job, or a large translation effort like
 5. **Stop and report**: stop when the goal is met, the cap is exceeded, or the
    work is blocked. Push the branch, and write a summary — what was done, what
    was learned, current state, next steps, final spend from
-   `uv run ~/tools/spend.py` — as a file in the branch. **Not an email:** no
-   `msmtp` in this image, by design. Note in the summary what would have gone
-   to `~/wiki/` had the session been supervised.
+   `uv run ~/tools/spend.py` — as a file in the branch. Also send it as the
+   summary email: `msmtp` and `~/.msmtprc` are mounted for exactly this, and the
+   run is expected to report itself that way rather than leave someone to go
+   looking in a branch. Note in the summary what would have gone to `~/wiki/`
+   had the session been supervised.
 
 Never merge the branch, never push to `dev` or `main`, never mark a PR ready.
 Leave the branch and stop.
@@ -155,9 +157,18 @@ properties of the environment, not promises about behaviour.
   `ssh-agent`, or `rsync` binary exists. Git has no SSH transport at all, so it
   cannot fall back to `~/.ssh/id_ed25519` — not even if the key were somehow
   mounted, and not even if `GIT_SSH_COMMAND` were unset.
-- **One credential exists**: the repo-scoped PAT, mounted read-only. The
-  `jefscad` PAT and the lab bot credential are not mounted and not reachable.
-- **No `~/.aws`, `~/.azure`, `~/.config/lab-bot`, or host tool directory.**
+- **Two credentials exist, both mounted read-only; neither is the personal
+  key.** (1) the repo-scoped PAT, which is what git pushes with. (2) the
+  lab-bot OpenRouter key, mounted as `~/.config/lab-bot/pi-auth.json` →
+  `~/.pi/agent/auth.json`, which every model call in the session goes out on.
+  That key is **agent-scoped, not repo-scoped**: there is not one key per
+  repository. Every agent set up to be capable of unsupervised runs — this one
+  and the lab containers — shares this single key, and the key carries its own
+  spend limit at OpenRouter. A runaway run therefore cannot spend without
+  bound; what it can do is consume the budget the other agents are sharing.
+  The `jefscad` PAT is not mounted and not reachable.
+- **No `~/.aws`, `~/.azure`, or host tool directory**, and of `~/.config/lab-bot`
+  only the single auth file above — not the directory.
 - **`~/wiki/` is mounted read-only** — full read access to the knowledge base,
   including other projects' pages, with no ability to write. Wiki updates go
   through `notes/wiki-proposals/` and a human promotes them.
@@ -165,14 +176,23 @@ properties of the environment, not promises about behaviour.
   so the rules this session is operating under cannot be edited mid-session.
 - `--cap-drop=ALL` and `--security-opt=no-new-privileges:true`.
 
-Together these mean the worst realistic outcome of a bad unattended run is
-**junk commits and branches inside pixel-world**. Nothing outside this
-repository is reachable.
+Together these mean nothing outside this repository is **modifiable**. The
+worst realistic outcome of a bad unattended run is therefore **junk commits and
+branches inside pixel-world**, plus two things that leave the container without
+touching a file: **spend on the shared lab-bot key** — bounded by that key's own
+limit, so the failure mode is eating the other agents' budget rather than an
+unbounded bill — and **mail sent through the mounted `~/.msmtprc`**, which is a
+supported path for unsupervised summaries. Nothing else outside the repo is
+reachable.
 
 ### Credentials
 
 Agent sessions push as `jefwagner` with a fine-grained PAT scoped to this repo
-only. Setup and the full permission list are in
+only — that is the *git* credential. Model calls are a separate credential: the
+lab-bot OpenRouter key in the mounted Pi auth file, which is not scoped to this
+repository, is limited only by its own spend limit at OpenRouter, and is shared
+with the other agents set up for unsupervised runs. Setup and the full
+permission list for the PAT are in
 `~/tools/llm-instructions/pat-setup.md`; the token lives at
 `~/.config/jef/pixel-world-pat` (mode 600, outside the repo), mounted into the
 container at the same relative path.
@@ -203,7 +223,16 @@ git remote set-url origin https://github.com/jefwagner/pixel-world.git
 The container bounds the *filesystem* and the *credentials*. It does not bound:
 
 - **Spend.** `spend.py` reports and exits non-zero; nothing interrupts. The cap
-  is enforced by treating that exit code as a stop signal.
+  is enforced by treating that exit code as a stop signal. The hard backstop is
+  OpenRouter's own limit on the lab-bot key, not anything in this repo — and
+  that key is shared with every other agent capable of unsupervised runs. As of
+  this writing the key reports a $20 limit with ~$19.24 remaining, which is the 
+  point: an overrun cannot run away, but it comes out of the other agents' 
+  budget until the limit resets.
+- **Mail.** `msmtp` and `~/.msmtprc` are mounted, and sending the summary email
+  is supported — so mail is a real egress path out of the container. Nothing
+  inside the container reviews or can recall what is sent: keep it to what the
+  summary would state anyway.
 - **Repo damage.** `reset --hard`, `rm`, and a force-push to a non-protected
   branch are all still possible *within* this repo. That is why worktrees and
   branch discipline exist.
