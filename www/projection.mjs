@@ -182,6 +182,86 @@ export function createViewRotation(azimuth, elevation) {
  */
 
 /**
+ * @typedef {Object} View
+ * @property {number} azimuth
+ * @property {number} elevation
+ * @property {number} stretchWidth
+ * @property {number} stretchHeight
+ * @property {'cardinal'|'diagonal'} kind
+ */
+
+/**
+ * @typedef {Object} CameraSnap
+ * @property {Float32Array} renderPos
+ *   World camera centre on the constraint grid, as [x, 0, z].
+ * @property {{ x: number, y: number }} cropOffset
+ *   Sub-pixel remainder in buffer pixels, y down.
+ */
+
+// Ground-plane world-(x,z) to buffer-pixel map for a view. The camera basis
+// rows are right and up; buffer y grows downward, hence the negated up terms.
+// With the exact Ch1 stretch this maps integer world steps to integer pixels.
+function groundPlaneMap(view) {
+  const V = createViewRotation(view.azimuth, view.elevation);
+  const sx = PIX_WU * view.stretchWidth;
+  const sy = PIX_WU * view.stretchHeight;
+  return {
+    m00: sx * V[0],   //  right.x
+    m01: sx * V[8],   //  right.z
+    m10: -sy * V[1],  // -up.x
+    m11: -sy * V[9],  // -up.z
+  };
+}
+
+/**
+ * Snap a continuous camera target onto the view's constraint grid.
+ *
+ * In buffer-pixel coordinates, with pixel centres at half-integers and edges
+ * at integers, the camera centre must satisfy:
+ *
+ *   cardinal: M*c is (integer, integer)
+ *   diagonal: M*c is (integer, half-integer)
+ *
+ * The diagonal half-integer y puts the diamond's horizontal diagonal on a
+ * pixel centre and its vertical diagonal on a pixel edge, which rasterises the
+ * 9-row 4,8,12,16,20,16,12,8,4 shape that tiles cleanly. An integer y gives
+ * the 10-row shape instead. M maps integer world steps to integer pixels, so
+ * both parities are reachable by shifting c by half a buffer pixel.
+ *
+ * The target stays continuous; the sub-pixel remainder is returned as
+ * cropOffset for the present pass.
+ *
+ * @param {View} view
+ * @param {ArrayLike<number>} target  world [x, y, z]; y is ignored
+ * @returns {CameraSnap}
+ */
+export function snapCamera(view, target) {
+  const { m00, m01, m10, m11 } = groundPlaneMap(view);
+  const tx = target[0];
+  const tz = target[2];
+  const rawX = m00 * tx + m01 * tz;
+  const rawY = m10 * tx + m11 * tz;
+
+  const snappedX = Math.round(rawX);
+  const snappedY = view.kind === VIEW_KIND.DIAGONAL
+    ? Math.floor(rawY) + 0.5
+    : Math.round(rawY);
+
+  // c = target + M^-1 * (snapped - raw), so M*c is exactly the snapped
+  // lattice point and the render position is the nearest valid camera centre.
+  const det = m00 * m11 - m01 * m10;
+  const ex = snappedX - rawX;
+  const ey = snappedY - rawY;
+  const dx = (m11 * ex - m01 * ey) / det;
+  const dz = (-m10 * ex + m00 * ey) / det;
+
+  return {
+    renderPos: new Float32Array([tx + dx, 0, tz + dz]),
+    cropOffset: { x: rawX - snappedX, y: rawY - snappedY },
+  };
+}
+
+/**
  * Compose the full camera matrix: scale * view * translation.
  *
  * The multiply order and the trailing ftz pass over the result are both

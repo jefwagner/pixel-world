@@ -75,20 +75,22 @@ parameters, camera position snapped to the constraint grid, and the decompositio
 two features — the snap function and the crop offset are the same computation, split
 between two consumers. Keeping them together is the point of this step.
 
-**Concepts touched.** Ch1's parameter table (theta, s_x, s_y per view); Ch3's
+**Concepts touched.** Ch1's parameter table (elevation, s_x, s_y per view); Ch3's
 half-integer constraint; render-larger-than-viewport; decoupling "where tiles are
 rasterized" from "what the player sees."
 
 **Concrete work.**
-- Build a `VIEWS` table: azimuth 0–315° in 45° steps → `{theta, s_x, s_y, kind}`
-  (kind: cardinal/diagonal). Values from Ch1: theta 30 vs 30.25, s_x 1 vs 1.010,
-  s_y 1 vs 1.003.
+- Build a `VIEWS` table: azimuth 0–315° in 45° steps →
+  `{azimuth, elevation, s_x, s_y, kind}` (kind: cardinal/diagonal). Values from
+  Ch1: elevation 30 vs 30.25, s_x 1 vs 1.01015, s_y 1 vs 1.00255.
 - `snapCamera(view, target)` returns `{renderPos, cropOffset}`: `renderPos` is the
   camera center on the constraint grid (integer x / half-integer y diagonal; integer
-  both axes cardinal), `cropOffset = target − renderPos` in buffer pixels. Careful
-  with units: the constraint is expressed in *pixels* (half-integer pixel y =
-  multiples of 1/28 world units at 14 px/wu). The current hardcoded center
-  `[0.5, 0, 0.6]` is off-constraint (0.6 wu = 8.4 px) — a good test case.
+  both axes cardinal), and `cropOffset` is the projected difference
+  target − renderPos in buffer pixels. Careful with units: the constraint is
+  expressed in *pixels* (half-integer pixel y = multiples of 1/28 world units at
+  14 px/wu). The current hardcoded center `[0.5, 0, 0.6]` is already on the
+  diagonal half-integer parity (the 9-row case); `[0.5, 0, 0.5]` is the 10-row
+  parity. Both are useful test cases.
 - Enlarge the internal buffer so there is room to crop: 160×120 → 160×150 (15 px
   margin top/bottom; the blog used the same 12.5% ratio: 320×240 with 30 px
   margins). The scene pass renders the full buffer; the *visible window* stays
@@ -102,8 +104,10 @@ rasterized" from "what the player sees."
   sliver question) needs a grid — defer to Step 4.
 
 **Verify.**
-1. At every azimuth, the snapped camera rasterizes the diamond symmetrically
-   (inspect tool from Step 1); unsnapped positions visibly lopside it.
+1. At every diagonal azimuth the snapped camera rasterises the 9-row
+   `4,8,12,16,20,16,12,8,4` diamond; cardinal views rasterise the 14×7
+   rectangle (inspect tool from Step 1). The 10-row parity and off-parity
+   positions are visibly different.
 2. The decoupling demo: nudge the crop offset. Under nearest sampling, fractional
    offsets do *not* shift the image smoothly — they produce per-column quantization
    crawl (distortion). The image only shifts when the offset crosses a whole buffer

@@ -52,7 +52,7 @@ instancing are Step 4; input and camera follow are Step 6.
   **Verified:** 48 tests pass; an uncached browser reload renders identically
   (user-confirmed); the golden camera matrix is bit-identical to before.
 
-- [ ] **2. `snapCamera(view, target)` — the constraint grid and the crop offset**
+- [x] **2. `snapCamera(view, target)` — the constraint grid and the crop offset**
 
   Add a pure function returning `{ renderPos, cropOffset }`, and pin the snap
   contract with tests.
@@ -81,6 +81,9 @@ instancing are Step 4; input and camera follow are Step 6.
   diagonal snapped camera rasterises the 9-row `4,8,12,16,20,16,12,8,4`
   diamond and a cardinal one the 7-row 14×7 rectangle; the browser hash is
   still `c8f95a5d` (nothing is wired up yet).
+
+  **Verified:** 56 tests pass; the renderer still bypasses `snapCamera`, so
+  the rendered frame is unchanged.
 
 - [ ] **3. Enlarge the internal buffer and make the present pass crop-aware**
 
