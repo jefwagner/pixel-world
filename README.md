@@ -11,10 +11,15 @@ where the agent needs the same rules you do.
 ## Current state
 
 A learning implementation: a two-stage renderer (`www/demo.js`) — one textured unit
-quad at a diagonal view (phi=45), rendered into a 160×120 internal buffer and
-presented at 4× integer scale with nearest-neighbour filtering. Camera
-parameters are hardcoded in a single `cameraView` object. No render loop, no
-input, no view switching.
+quad at a diagonal view (theta=30, phi=45), rendered into a 160×120 internal
+buffer and presented at 4× integer scale with nearest-neighbour filtering. A
+per-frame `requestAnimationFrame` loop re-encodes and submits each frame from a
+single mutable `state.cameraView` object, and `window.snapshot()` reads the
+internal buffer back as a pixel fingerprint for verification.
+
+Roadmap Step 1 (refactor, render loop, readback harness) is complete. Still
+missing: input, view switching, and the UV-to-texel transform. Next up is
+Step 2, the camera snap→crop contract.
 
 `roadmap.md` is the plan; `notes/open-questions.md` holds the unresolved
 design tensions. The design rationale is distilled in the wiki at
@@ -52,6 +57,20 @@ python3 -m http.server 8000 --directory www
 
 Requires a browser with WebGPU enabled (Chrome/Edge 113+, or Safari 18+).
 
+## Tests
+
+The pure halves of the renderer run under Node's built-in test runner — there is
+no npm project:
+
+```bash
+node --test www/projection.test.mjs www/snapshotPixels.test.mjs
+```
+
+The GPU half cannot run in Node, so it is verified in the browser instead: open
+the demo and run `(await snapshot()).hash` in the console, then compare it with
+the baseline recorded alongside the change (currently in `todo.md`). That is a
+real pixel diff rather than an eyeball judgement.
+
 ## Layout
 
 `www/` is the document root — it is what gets served, and nothing outside
@@ -60,7 +79,10 @@ it is exposed over HTTP.
 | Path | What |
 |---|---|
 | `www/index.html` | page shell, canvas |
-| `www/demo.js` | the renderer: device setup, pipeline, camera, two-stage present |
+| `www/demo.js` | the renderer: device setup, pipelines, per-frame encode, render loop |
+| `www/projection.mjs` | pure projection constants and matrix maths (Node-testable) |
+| `www/snapshotPixels.mjs` | pure pixel helpers for readback and fingerprinting (Node-testable) |
+| `www/projection.test.mjs`, `www/snapshotPixels.test.mjs` | `node --test` suites for the two pure modules |
 | `www/shader.wgsl` | vertex + fragment shaders |
 | `www/color-squares.png` | the texture the demo samples |
 | `roadmap.md` | learning-session roadmap and current state |
