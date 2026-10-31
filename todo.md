@@ -85,20 +85,21 @@ instancing are Step 4; input and camera follow are Step 6.
   **Verified:** 56 tests pass; the renderer still bypasses `snapCamera`, so
   the rendered frame is unchanged.
 
-- [ ] **3. Enlarge the internal buffer and make the present pass crop-aware**
+- [ ] **3. Enlarge the internal buffer to 180×150 and make the present pass crop-aware**
 
-  Render into a 160×150 buffer while presenting a 160×120 window, so the crop
-  can slide without re-rasterising the scene.
+  Render into a 180×150 buffer while presenting a 160×120 window, so the crop
+  can slide in both axes without re-rasterising the scene.
 
   - Split the buffer dimensions from the visible dimensions in
-    `projection.mjs`: `BUFFER_WIDTH`/`BUFFER_HEIGHT` (160×150) for the scene
+    `projection.mjs`: `BUFFER_WIDTH`/`BUFFER_HEIGHT` (180×150) for the scene
     pass, `SCREEN_WIDTH`/`SCREEN_HEIGHT` (160×120) for the visible window and
     the 4× canvas. The camera matrix uses the buffer extent.
   - Add a crop window to the present pass — a uniform with the window origin
     (and size, if not compile-time), applied to the `uv` before sampling. Keep
     nearest filtering and the single full-screen triangle.
-  - Default the window to the vertical centre (y = 15) so the visible image is
-    the same frame as before, just cropped from a taller buffer.
+  - Default the window to the buffer centre (origin x = 10, y = 15) so the
+    visible image is the same frame as before, just cropped from a larger
+    buffer.
   - Add debug keys to nudge the crop origin by whole buffer pixels and by
     fractions of one, so the quantisation behaviour can be observed.
   - Record the new full-buffer snapshot baseline here.
@@ -107,7 +108,7 @@ instancing are Step 4; input and camera follow are Step 6.
   shows the same image as the old 160×120 buffer; moving the crop by whole
   pixels shifts the image in 4-screen-pixel steps; fractional offsets produce
   the per-column crawl under nearest sampling; `(await snapshot())` reports the
-  new 160×150 dimensions and the recorded hash.
+  new 180×150 dimensions and the recorded hash.
 
 - [ ] **4. Cycle the 8 views and wire the snap→crop decomposition**
 
@@ -147,8 +148,9 @@ instancing are Step 4; input and camera follow are Step 6.
   parity reachable; the snap chooses which one by shifting `c` by half a
   buffer pixel in the relevant axis.
 - **The buffer margin is for the window, not the snap.** `cropOffset` is
-  sub-pixel, so the 15 px margin is headroom for crop nudging and later view
-  transitions, not a requirement of the snap itself.
+  sub-pixel, so the 10 px horizontal / 15 px vertical margins are headroom for
+  crop nudging and later view transitions, not a requirement of the snap
+  itself.
 
 ## Deliberately not in these items
 
