@@ -1,173 +1,202 @@
 // Demo of WebGPU rendering
 //
-// I'll try to capture what's happing in notes in front of each block
+// The renderer's two halves are split across three modules:
+//
+//   projection.mjs     - pure projection constants and matrix maths (no GPU)
+//   snapshotPixels.mjs - pure pixel helpers for readback (no GPU)
+//   demo.js            - this file: WebGPU setup, per-frame encoding, loop
+//
+// The split exists so the first two can be unit-tested with `node --test`,
+// since Node cannot create a GPUDevice. This file's output is verified
+// instead by snapshotting the internal buffer and diffing the fingerprint
+// against a recorded baseline.
+//
+// NOTE: index.html loads this as `<script type="module">`, and whatever
+// server serves www/ must send .mjs as JavaScript.
 
-// Screen-size in pixels
-const SCREEN_WIDTH = 160;
-const SCREEN_HEIGHT = 120;
+import {
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  createCamera,
+} from './projection.mjs';
 
-// Constants used to calculate projection matrix
-// - 14 pixelx per world unit
-// - internal canvas is 160x120
-// - near and far plane simply set large
-const PIX_WU = 14; // 14 pixels/world-unit
-const VW = SCREEN_WIDTH/PIX_WU; // view-width
-const VH = SCREEN_HEIGHT/PIX_WU; // view-height
-const VDN = -100; // view-depth near plane
-const VDF = 100; // view-depth far plane
+import {
+  bytesPerRowAligned,
+  unpadRows,
+  summarise,
+} from './snapshotPixels.mjs';
 
-// A simple flush-to-zero function
-const FTZ_THRESHOLD = 1.0e-15;
-function ftz(num) {
-  return Math.abs(num) < FTZ_THRESHOLD ? 0 : num;
-}
+// All mutable renderer state, in one object. cameraView is read by the scene
+// pass on every frame, so changing it here takes effect on the next frame
+// with no separate invalidation step.
+const state = {
+  device: null,
+  context: null,
+  format: null,
 
-// First - create the canvas we will be working with
-console.log("Creating canvas");
-let demoDiv = document.getElementById("demo");
-let canvas = document.createElement('canvas');
-demoDiv.appendChild(canvas);
-canvas.id = 'demoCanvas';
-canvas.width = 640;
-canvas.height = 480;
+  sceneTexture: null,
+  sceneTextureView: null,
+  scene: null,
+  present: null,
 
-// Run the full process as an async function
-main();
-
-/**
-  * @typedef {Object} CameraView
-  * @property {Float32Array} center
-  * @property {number} theta
-  * @property {number} phi
-  * @property {number} stretchWidth
-  * @property {number} stretchHeight
-  */
-
-/**
- * @type {CameraView}
- */
-function createCamera(view) {
-  const T = createTranslation(view.center);
-  const V = createViewRotation(view.theta, view.phi);
-  const S = createOrthoScale(view.stretchWidth, view.stretchHeight);
-  let temp = new Float32Array(16);
-  let C = new Float32Array(16);
-  matMul(S, V, temp);
-  matMul(temp, T, C);
-  for (let i=0; i<C.length; i++) {
-    C[i] = ftz(C[i]);
-  }
-  return C;
-}
-
-/**
- * @type {number}
- */
-function createTranslation(center) {
-  return new Float32Array([
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, 0.0,
-    -center[0], -center[1], -center[2], 1.0,
-  ]);
-}
-
-/**
- * @type {number}
- * #type {number}
- */
-function createOrthoScale(sWidth, sHeight) {
-  return new Float32Array([
-    2/VW, 0, 0, 0,
-    0, 2/VH, 0, 0,
-    0, 0, 1/(VDF-VDN), 0,
-    0, 0, -VDN/(VDF-VDN), 1,
-  ])
-}
-
-/**
- * @type {number}
- * @type {number}
- */
-function createViewRotation(theta, phi) {
-  const theta_rad = theta*Math.PI/180;
-  const phi_rad = phi*Math.PI/180;
-  const dir = new Float32Array([
-    Math.cos(phi_rad)*Math.cos(theta_rad),
-    -Math.sin(theta_rad),
-    Math.sin(phi_rad)*Math.cos(theta_rad),
-  ]);
-  const right = new Float32Array([
-    -Math.sin(phi_rad),
-    0,
-    Math.cos(phi_rad),
-  ]);
-  let up = new Float32Array(3);
-  crossVec3(right, dir, up);
-  return new Float32Array([
-    right[0], up[0], -dir[0], 0,
-    right[1], up[1], -dir[1], 0,
-    right[2], up[2], -dir[2], 0,
-    0, 0, 0, 1,
-  ]);
-}
-
-/**
- * @type {Float32Array}
- * @type {Float32Array}
- * @type {Float32Array}
- */
-function crossVec3(a, b, out) {
-  out[0] = a[1]*b[2]-a[2]*b[1];
-  out[1] = a[2]*b[0]-a[0]*b[2];
-  out[2] = a[0]*b[1]-a[1]*b[0];
-  return out;
-}
-
-/**
- * @type {FLoat32Array}
- * @type {Float32Array}
- * @type {Float32Array}
- */
-function matMul(L, R, out) {
-  for (let col = 0; col < 4; col++) {
-    for (let row = 0; row < 4; row++) {
-      let sum = 0;
-      for (let k = 0; k < 4; k++) {
-        sum += L[k * 4 + row] * R[col * 4 + k];
-      }
-      out[col * 4 + row] = sum;
-    }
-  }
-  return out;
-}
-
-async function main() {
-
-  /**
-    * @typedef {Object} CameraView
-    * @property {Float32Array} center
-    * @property {number} theta
-    * @property {number} phi
-    * @property {number} stretchWidth
-    * @property {number} stretchHeight
-    */
-  const cameraView = {
-    center: new Float32Array([0.5, 0, 0.5+0.1]),
+  // The quad sits on the xz plane (y = 0), so `center[1]` is always 0.
+  // The z of 0.6 is deliberately off the 0.5 gridline — the diamond
+  // rasterizes 9 rows rather than 10, which makes the asymmetry visible.
+  cameraView: {
+    center: new Float32Array([0.5, 0, 0.5 + 0.1]),
     theta: 30,
     phi: 45,
     stretchWidth: 1,
     stretchHeight: 1,
-  };
-  
-  // calculate the camera matrix
-  const cameraMatrix = createCamera(cameraView);
-  console.log("Creating camera matrix");
+  },
+};
+
+// Read the internal scene texture back to the CPU as tightly-packed RGBA.
+//
+// copyTextureToBuffer requires bytesPerRow to be a multiple of 256; at 160px
+// RGBA that is 768, not 640, so each row comes back with 128 bytes of padding
+// that must be stripped or the image shears diagonally.
+//
+// The copy is submitted after whatever frames the render loop has already
+// queued, so the result reflects the most recently *submitted* frame — at
+// most one frame old. That is invisible while the camera is static, and
+// matters only once the camera follows a moving character (roadmap Step 6).
+//
+// @param {GPUDevice} device
+// @param {GPUTexture} sceneTexture   must have COPY_SRC usage
+// @param {number} width
+// @param {number} height
+// @param {string} format             the texture's format, e.g. 'bgra8unorm'
+// @returns {Promise<{width: number, height: number, format: string,
+//                    data: Uint8Array}>}
+async function snapshotBuffer(device, sceneTexture, width, height, format) {
+  const bytesPerRow = bytesPerRowAligned(width, 4);
+  const readback = device.createBuffer({
+    size: bytesPerRow * height,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  const encoder = device.createCommandEncoder();
+  encoder.copyTextureToBuffer(
+    { texture: sceneTexture },
+    { buffer: readback, bytesPerRow },
+    [width, height, 1],
+  );
+  device.queue.submit([encoder.finish()]);
+
+  await readback.mapAsync(GPUMapMode.READ);
+  const padded = new Uint8Array(readback.getMappedRange());
+  const data = unpadRows(padded, width, height, bytesPerRow);
+  readback.unmap();
+  readback.destroy();
+
+  return { width, height, format, data };
+}
+
+// Read back the current frame and return its fingerprint.
+//
+// Logs one line, caches the result on window.lastSnapshot, and resolves to
+// the summary object so verification is a single expression:
+//
+//   (await snapshot()).hash === 'c8f95a5d'
+//
+// @returns {Promise<{nonBlack: number, total: number, rowWidths: string,
+//                    hash: string}>}
+async function snapshot() {
+  const snap = await snapshotBuffer(
+    state.device, state.sceneTexture, SCREEN_WIDTH, SCREEN_HEIGHT, state.format,
+  );
+  const s = summarise(snap);
+  window.lastSnapshot = s;
+  console.log(
+    `[snapshot] nonBlack=${s.nonBlack}/${s.total} ` +
+    `rowWidths=${s.rowWidths} hash=${s.hash}`,
+  );
+  return s;
+}
+
+// Exposed for console use. The render loop does not call this — a snapshot
+// every frame would bury the console.
+window.snapshot = snapshot;
+
+// Get a handle to the gpu adaptor and device
+// - early exit with error message is missing
+//
+// @returns {Promise<{device: GPUDevice, context: GPUCanvasContext,
+//                    format: string}>}
+async function initGPU() {
+  console.log("Checking for webgpu features");
+  const adapter = await navigator.gpu?.requestAdapter();
+  const device = await adapter?.requestDevice();
+  if (!device) {
+    throw new Error('...need a browser that supports WebGPU');
+  }
+  console.log("... webgpu found");
+
+  const context = canvas.getContext('webgpu');
+  const format = navigator.gpu?.getPreferredCanvasFormat();
+  context.configure({
+    device: device,
+    format: format,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    alphaMode: 'opaque',
+  });
+  console.log("Setting Canvas Config");
+
+  return { device, context, format };
+}
+
+// Load the two assets the pipeline needs: the texture image and the compiled
+// shader. Everything else is derived from these.
+//
+// @param {GPUDevice} device
+// @returns {Promise<{imageBitmap: ImageBitmap, shaderModule: GPUShaderModule}>}
+async function createAssets(device) {
+  console.log("Loading texture");
+  const imageResponse = await fetch('./color-squares.png');
+  const imageBlob = await imageResponse.blob();
+  const imageBitmap = await createImageBitmap(imageBlob);
+
+  console.log("Loading shader");
+  const shaderResponse = await fetch("./shader.wgsl");
+  const shaderCode = await shaderResponse.text();
+  const shaderModule = device.createShaderModule({ code: shaderCode });
+  console.log("...shader compiled successfully");
+
+  return { imageBitmap, shaderModule };
+}
+
+// The internal low-res render target. Larger than the visible window in
+// future (roadmap Step 2 adds a crop margin), which is why its size and the
+// window size are kept distinct here even though they match today.
+//
+// COPY_SRC is required for snapshotBuffer(); it is not a present-only target.
+//
+// @param {GPUDevice} device
+// @param {string} format
+// @returns {GPUTexture}
+function createSceneTexture(device, format) {
+  console.log("Create low-res canvas");
+  return device.createTexture({
+    size: [SCREEN_WIDTH, SCREEN_HEIGHT],
+    format: format,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING |
+           GPUTextureUsage.COPY_SRC,
+  });
+}
+
+// Buffers, texture, bind group and pipeline for the scene pass.
+//
+// Each vertex is 5 floats: x,y,z followed by u,v. Position and uv share one
+// array because for static data the cache locality is better than two.
+//
+// @param {GPUDevice} device
+// @param {{imageBitmap: ImageBitmap, shaderModule: GPUShaderModule}} assets
+// @param {string} format
+// @returns {object} scene resources consumed by renderFrame
+function createSceneResources(device, assets, format) {  const { imageBitmap, shaderModule } = assets;
 
   // Create the vertex array
-  // each vertex is a 4 floats (x,y) (uv)
-  // Note: attributes (pos/uv) being in same array is better for static data because 
-  // of cache locality
   console.log("Creating vertex/attribute array");
   const vertices = new Float32Array([
     // 0: lower-left
@@ -188,44 +217,6 @@ async function main() {
     0, 2, 3, // second triangle with ccw orientation
   ]);
 
-  // Load image data
-  console.log("Loading texture");
-  const imageResponse = await fetch('./color-squares.png');
-  const imageBlob = await imageResponse.blob();
-  const imageBitmap = await createImageBitmap(imageBlob);
-
-  // get a handle to gpu adaptor and device
-  // - early exit with error message is missing
-  console.log("Checking for webgpu features");
-  const adapter = await navigator.gpu?.requestAdapter();
-  const device = await adapter?.requestDevice();
-  if (!device) {
-    console.error('...need a browser that supports WebGPU');
-    return;
-  }
-  console.log("... webgpu found");
-
-  // Create a new webgpu context in the canvas
-  console.log("Setting Canvas Config");
-  const context = canvas.getContext('webgpu');
-  const format = navigator.gpu?.getPreferredCanvasFormat();
-  const canvasConfig = {
-    device: device,
-    format: format,
-    usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    alphaMode: 'opaque',
-  };
-  context.configure(canvasConfig);
-
-  // Create camera matrix
-  console.log("Copying camera matrix data to GPU");
-  const cameraBuffer = device.createBuffer({
-    size: cameraMatrix.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-  device.queue.writeBuffer(cameraBuffer, 0, cameraMatrix);
-
-  // Create buffers and copy data
   console.log("Copying vertex/index data to GPU buffers");
   const vertexBuffer = device.createBuffer({
     size: vertices.byteLength,
@@ -238,13 +229,19 @@ async function main() {
   });
   device.queue.writeBuffer(indexBuffer, 0, indices);
 
-  // Create the texture
+  // The camera matrix is rewritten every frame, so this buffer is created
+  // once and never resized.
+  const cameraBuffer = device.createBuffer({
+    size: 16 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
   console.log("Creating texture for GPU");
   const texture = device.createTexture({
     size: [imageBitmap.width, imageBitmap.height, 1],
     format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING | 
-           GPUTextureUsage.COPY_DST | 
+    usage: GPUTextureUsage.TEXTURE_BINDING |
+           GPUTextureUsage.COPY_DST |
            GPUTextureUsage.RENDER_ATTACHMENT,
   });
   device.queue.copyExternalImageToTexture(
@@ -253,24 +250,16 @@ async function main() {
     [ imageBitmap.width, imageBitmap.height],
   );
 
-  // Create a sampler
+  // Note: addressModeU/V are left at their default of 'clamp-to-edge'.
+  // That is correct for a single quad; it becomes load-bearing in roadmap
+  // Step 3, where the UV-to-texel transform samples authored tile art and
+  // must not wrap.
   console.log("Creating sampler");
   const sampler = device.createSampler({
     magFilter: 'nearest',
     minFilter: 'nearest',
   });
 
-  // Load and compile the shader code
-  console.log("Loading shader");
-  const shaderResponse = await fetch("./shader.wgsl");
-  const shaderCode = await shaderResponse.text();
-  const shaderDesc = {
-    code: shaderCode
-  };
-  let shaderModule = device.createShaderModule(shaderDesc);
-  console.log("...shader compiled successfully");
-
-  // Create the bindgroup for the uniform and texture
   console.log("Creating scene bindgroup");
   const sceneBindGroupLayout = device.createBindGroupLayout({
     entries: [
@@ -300,17 +289,17 @@ async function main() {
     ],
   });
 
-  // Create the render pipeline
   console.log("Creating pipeline");
-  const scenePipelineLayoutDesc = { bindGroupLayouts: [sceneBindGroupLayout] };
-  const scenePipelineLayout = device.createPipelineLayout(scenePipelineLayoutDesc);
-  const scenePipelineDesc = {
+  const scenePipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [sceneBindGroupLayout],
+  });
+  const scenePipeline = device.createRenderPipeline({
     layout: scenePipelineLayout,
     vertex: {
       module: shaderModule,
       entryPoint: 'vs_scene',
       buffers: [{
-        arrayStride: 5*4, // 4 floats (x,y,z)(u,v) , 4 bytes each (f32)
+        arrayStride: 5 * 4, // 5 floats (x,y,z)(u,v), 4 bytes each (f32)
         attributes: [
           {
             shaderLocation: 0,
@@ -319,7 +308,7 @@ async function main() {
           },
           {
             shaderLocation: 1,
-            offset: 3*4,
+            offset: 3 * 4,
             format: 'float32x2',
           },
         ]
@@ -335,54 +324,32 @@ async function main() {
       frontFace: 'ccw',
       cullMode: 'back',
     }
-  } 
-  let scenePipeline = device.createRenderPipeline(scenePipelineDesc);
-
-  // Create a render pass
-  // - get ref to canvas as target texture
-  // - create clear color
-  // - create command encoder
-  //   - create render pass with clear color
-  //   - set viewpoint
-  //   - set pipeline
-  //   - set bindgroup
-  //   - send draw command
-  //
-  // Note: There can be no async calls between getting the canvas texture and queueing
-  // the commands
-  console.log("Create low-res canvas");
-  const sceneTexture = device.createTexture({
-    size: [SCREEN_WIDTH, SCREEN_HEIGHT],
-    format: format,
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
   });
-  const sceneTextureView = sceneTexture.createView();
 
-  console.log("Creating clear-color render pass");
-  let sceneColorAttachment = {
-    view: sceneTextureView,
-    clearValue: {r: 0, g: 0, b: 0, a: 1},
-    loadOp: 'clear',
-    storeOp: 'store',
+  return {
+    vertexBuffer,
+    indexBuffer,
+    indexCount: indices.length,
+    cameraBuffer,
+    pipeline: scenePipeline,
+    bindGroup: sceneBindGroup,
+    sampler,
   };
-  const sceneRenderPassDesc = {
-    colorAttachments: [sceneColorAttachment]
-  };
+}
 
-  console.log("Creating pipeline command queue");
-  let commandEncoder = device.createCommandEncoder();
-  let scenePassEncoder = commandEncoder.beginRenderPass(sceneRenderPassDesc);
-  scenePassEncoder.setViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 1);
-  scenePassEncoder.setVertexBuffer(0, vertexBuffer);
-  scenePassEncoder.setIndexBuffer(indexBuffer, 'uint16');
-  scenePassEncoder.setPipeline(scenePipeline);
-  scenePassEncoder.setBindGroup(0, sceneBindGroup);
-  scenePassEncoder.drawIndexed(indices.length);
-  scenePassEncoder.end();
-
-  console.log("Getting canvas as target texture");
-  let canvasTexture = context.getCurrentTexture();
-  let canvasTextureView = canvasTexture.createView();
+// Pipeline and bind group for the present pass, which upscales the internal
+// buffer to the canvas. The present pipeline is deliberately vertex-buffer
+// free: vs_present generates one large triangle from vertex_index alone.
+//
+// @param {GPUDevice} device
+// @param {{shaderModule: GPUShaderModule}} assets
+// @param {string} format
+// @param {GPUTextureView} sceneTextureView
+// @param {GPUSampler} sampler  shared with the scene pass; both sample
+//                             nearest-filtered, so one instance serves both
+// @returns {object} present resources consumed by renderFrame
+function createPresentResources(device, assets, format, sceneTextureView, sampler) {
+  const { shaderModule } = assets;
 
   console.log("Creating presentation bindgroup layout");
   const presentBindGroupLayout = device.createBindGroupLayout({
@@ -396,12 +363,13 @@ async function main() {
     entries: [
       { binding: 0, resource: sampler },
       { binding: 1, resource: sceneTextureView },
-    ]
+    ],
   });
 
-  const presentPipelineLayoutDesc = { bindGroupLayouts: [presentBindGroupLayout] };
-  const presentPipelineLayout = device.createPipelineLayout(presentPipelineLayoutDesc);
-  const presentPipelineDesc = {
+  const presentPipelineLayout = device.createPipelineLayout({
+    bindGroupLayouts: [presentBindGroupLayout],
+  });
+  const presentPipeline = device.createRenderPipeline({
     layout: presentPipelineLayout,
     vertex: {
       module: shaderModule,
@@ -418,26 +386,113 @@ async function main() {
       frontFace: 'ccw',
       cullMode: 'back',
     },
-  }; 
-  let presentPipeline = device.createRenderPipeline(presentPipelineDesc);
+  });
 
-  let presentColorAttachment = {
-    view: canvasTextureView,
-    clearValue: {r: 0, g: 0, b: 0, a: 1},
-    loadOp: 'clear',
-    storeOp: 'store',
-  };
-  const presentRenderPassDesc = {
-    colorAttachments: [presentColorAttachment]
-  };
-  let presentPassEncoder = commandEncoder.beginRenderPass(presentRenderPassDesc);
+  return { pipeline: presentPipeline, bindGroup: presentBindGroup };
+}
+
+// Encode and submit exactly one frame: the scene pass into the internal
+// buffer, then the present pass from that buffer to the canvas.
+//
+// The camera matrix is recomputed and re-uploaded every frame rather than
+// cached. At this scale that is free, and it means edits to state.cameraView
+// take effect on the next frame with no invalidation step — which is what
+// roadmap Step 2's view switching and Step 6's camera follow will want.
+function renderFrame() {
+  const cameraMatrix = createCamera(state.cameraView);
+  state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
+
+  // There can be no async calls between getting the canvas texture and
+  // queueing the commands.
+  const canvasTexture = state.context.getCurrentTexture();
+  const canvasTextureView = canvasTexture.createView();
+
+  const commandEncoder = state.device.createCommandEncoder();
+
+  const scenePassEncoder = commandEncoder.beginRenderPass({
+    colorAttachments: [{
+      view: state.sceneTextureView,
+      clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      loadOp: 'clear',
+      storeOp: 'store',
+    }]
+  });
+  scenePassEncoder.setViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0, 1);
+  scenePassEncoder.setVertexBuffer(0, state.scene.vertexBuffer);
+  scenePassEncoder.setIndexBuffer(state.scene.indexBuffer, 'uint16');
+  scenePassEncoder.setPipeline(state.scene.pipeline);
+  scenePassEncoder.setBindGroup(0, state.scene.bindGroup);
+  scenePassEncoder.drawIndexed(state.scene.indexCount);
+  scenePassEncoder.end();
+
+  const presentPassEncoder = commandEncoder.beginRenderPass({
+    colorAttachments: [{
+      view: canvasTextureView,
+      clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      loadOp: 'clear',
+      storeOp: 'store',
+    }]
+  });
   presentPassEncoder.setViewport(0, 0, canvas.width, canvas.height, 0, 1);
-  presentPassEncoder.setPipeline(presentPipeline);
-  presentPassEncoder.setBindGroup(0, presentBindGroup);
+  presentPassEncoder.setPipeline(state.present.pipeline);
+  presentPassEncoder.setBindGroup(0, state.present.bindGroup);
   presentPassEncoder.draw(3);
   presentPassEncoder.end();
 
-  console.log("Submitting command queue");
-  device.queue.submit([commandEncoder.finish()]);
+  state.device.queue.submit([commandEncoder.finish()]);
 }
 
+// Drive renderFrame from the display's refresh. Only GPU *resources* are
+// created during init; per-frame work is encoding and submission.
+function startRenderLoop() {
+  requestAnimationFrame(function loop() {
+    renderFrame();
+    requestAnimationFrame(loop);
+  });
+}
+
+// Create the canvas we will be working with
+console.log("Creating canvas");
+const demoDiv = document.getElementById("demo");
+const canvas = document.createElement('canvas');
+demoDiv.appendChild(canvas);
+canvas.id = 'demoCanvas';
+canvas.width = 640;
+canvas.height = 480;
+
+// Create all GPU resources. Creation happens exactly once; nothing here is
+// called again on subsequent frames.
+async function init() {
+  const gpu = await initGPU();
+  state.device = gpu.device;
+  state.context = gpu.context;
+  state.format = gpu.format;
+
+  const assets = await createAssets(state.device);
+
+  state.sceneTexture = createSceneTexture(state.device, state.format);
+  state.sceneTextureView = state.sceneTexture.createView();
+
+  // The scene pass owns the sampler and hands it back; the present pass
+  // samples the same internal buffer with the same filter, so both bind the
+  // one instance rather than creating two identical ones.
+  state.scene = createSceneResources(state.device, assets, state.format);
+  state.present = createPresentResources(
+    state.device, assets, state.format, state.sceneTextureView, state.scene.sampler,
+  );
+
+  console.log("Init complete");
+}
+
+init()
+  .then(async () => {
+    // Render one frame and fingerprint it, so the console opens with the
+    // baseline the todo.md verification refers to. Then hand over to the
+    // loop, which renders continuously from here on.
+    renderFrame();
+    await snapshot();
+    startRenderLoop();
+  })
+  .catch((err) => {
+    console.error(err);
+  });

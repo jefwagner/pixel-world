@@ -11,10 +11,15 @@ where the agent needs the same rules you do.
 ## Current state
 
 A learning implementation: a two-stage renderer (`www/demo.js`) — one textured unit
-quad at a diagonal view (phi=45), rendered into a 160×120 internal buffer and
-presented at 4× integer scale with nearest-neighbour filtering. Camera
-parameters are hardcoded in a single `cameraView` object. No render loop, no
-input, no view switching.
+quad at a diagonal view (theta=30, phi=45), rendered into a 160×120 internal
+buffer and presented at 4× integer scale with nearest-neighbour filtering. A
+per-frame `requestAnimationFrame` loop re-encodes and submits each frame from a
+single mutable `state.cameraView` object, and `window.snapshot()` reads the
+internal buffer back as a pixel fingerprint for verification.
+
+Roadmap Step 1 (refactor, render loop, readback harness) is complete. Still
+missing: input, view switching, and the UV-to-texel transform. Next up is
+Step 2, the camera snap→crop contract.
 
 `roadmap.md` is the plan; `notes/open-questions.md` holds the unresolved
 design tensions. The design rationale is distilled in the wiki at
@@ -52,6 +57,20 @@ python3 -m http.server 8000 --directory www
 
 Requires a browser with WebGPU enabled (Chrome/Edge 113+, or Safari 18+).
 
+## Tests
+
+The pure halves of the renderer run under Node's built-in test runner — there is
+no npm project:
+
+```bash
+node --test www/projection.test.mjs www/snapshotPixels.test.mjs
+```
+
+The GPU half cannot run in Node, so it is verified in the browser instead: open
+the demo and run `(await snapshot()).hash` in the console, then compare it with
+the baseline recorded alongside the change (currently in `todo.md`). That is a
+real pixel diff rather than an eyeball judgement.
+
 ## Layout
 
 `www/` is the document root — it is what gets served, and nothing outside
@@ -60,7 +79,10 @@ it is exposed over HTTP.
 | Path | What |
 |---|---|
 | `www/index.html` | page shell, canvas |
-| `www/demo.js` | the renderer: device setup, pipeline, camera, two-stage present |
+| `www/demo.js` | the renderer: device setup, pipelines, per-frame encode, render loop |
+| `www/projection.mjs` | pure projection constants and matrix maths (Node-testable) |
+| `www/snapshotPixels.mjs` | pure pixel helpers for readback and fingerprinting (Node-testable) |
+| `www/projection.test.mjs`, `www/snapshotPixels.test.mjs` | `node --test` suites for the two pure modules |
 | `www/shader.wgsl` | vertex + fragment shaders |
 | `www/color-squares.png` | the texture the demo samples |
 | `roadmap.md` | learning-session roadmap and current state |
@@ -116,15 +138,22 @@ The container is the security boundary, and it is worth knowing what it does:
 |---|---|
 | `~/.ssh/id_ed25519` | your personal key — reaches **every** repo you own, including the wiki |
 | `ssh`, `scp`, `sftp`, `ssh-agent`, `rsync` | with no ssh binary, git has **no SSH transport at all** and cannot fall back to the key |
-| the `jefscad` PAT, the lab bot credential | one credential only: the pixel-world PAT, mounted read-only |
-| `~/.aws`, `~/.azure`, host tool dir | — |
+| the `jefscad` PAT | the git credential is the pixel-world PAT alone, mounted read-only |
+| `~/.aws`, `~/.azure`, host tool dir, the rest of `~/.config/lab-bot` | — |
 | write access to `~/tools/llm-instructions/` | the agent cannot edit the rules it is working under |
+
+Two credentials are mounted, not one: the pixel-world PAT for git, and the
+lab-bot OpenRouter key (`~/.config/lab-bot/pi-auth.json`) that model calls go
+out on. The second is agent-scoped — **every agent capable of unsupervised runs
+shares it**, and its spend limit lives at OpenRouter, not here, so an overrun
+eats the other agents' budget rather than running unbounded.
 
 Plus `--cap-drop=ALL` and `--security-opt=no-new-privileges`.
 
-The practical result: **the worst realistic outcome of a bad unattended run is
-junk commits and branches inside pixel-world.** Nothing outside this repository
-is reachable from inside the container.
+The practical result: nothing outside this repository is **modifiable**, and the
+worst realistic outcome of a bad unattended run is **junk commits and branches
+inside pixel-world** — plus spend on the shared key and any mail it sends, which
+are the two ways content or money leaves the container.
 
 The one thing to understand before changing anything: the `.devcontainer/`
 mount list is short *on purpose*. Every mount is a hole in the boundary. The

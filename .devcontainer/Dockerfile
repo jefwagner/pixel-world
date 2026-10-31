@@ -79,10 +79,26 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @earendil-works/pi-coding-agent
 
-# pi agent config dir. devcontainer.json mounts the repo-scoped OpenRouter
-# auth.json at ~/.pi/agent/auth.json; the parent dir must exist and be
-# writable by vscode so pi can store models-store.json and sessions too.
-RUN mkdir -p /home/vscode/.pi/agent && chown -R vscode:vscode /home/vscode/.pi
+# pi agent config dir. devcontainer.json mounts the lab-bot agent's Pi auth
+# file (~/.config/lab-bot/pi-auth.json) at ~/.pi/agent/auth.json — agent-scoped,
+# not repo-scoped: it is the bot's own credential, shared across the sessions
+# that use it, unlike the repo-scoped PAT above. The parent dir must exist and
+# be writable by vscode so pi can store models-store.json and sessions too.
+#
+# The startup model is pinned here (defaultProvider + defaultModel) rather than
+# left to Pi's "Automatic" default. Without it, every fresh container starts on
+# whatever the catalog ordering suggests, and the model a session runs is an
+# accident of startup rather than part of the environment definition — the same
+# reason the toolchain versions above are pinned. This only sets the startup
+# default: /model still changes it for a session, and Ctrl+S there overrides it.
+# Note there is no env var for this; settings.json is the only knob.
+RUN mkdir -p /home/vscode/.pi/agent \
+    && printf '%s\n' \
+         '{' \
+         '  "defaultProvider": "openrouter",' \
+         '  "defaultModel": "deepseek/deepseek-v4.1-flash-1017"' \
+         '}' > /home/vscode/.pi/agent/settings.json \
+    && chown -R vscode:vscode /home/vscode/.pi
 
 # Create workspace mountpoint
 RUN mkdir -p /workspace && chown vscode:vscode /workspace
@@ -90,10 +106,12 @@ RUN mkdir -p /workspace && chown vscode:vscode /workspace
 USER vscode
 WORKDIR /workspace
 
-# No msmtp: this repo has no email reporting path. The unsupervised mode
-# section of AGENTS.md deliberately writes its summary into the branch
-# instead. If that ever changes, add msmtp here and mount ~/.msmtprc
-# read-only — and re-read that section, because a summary email is a
-# send-to-the-outside-world action that deserves a second thought.
+# msmtp (installed above, alongside msmtp-mta) plus the ~/.msmtprc mount is how
+# an unsupervised run sends its summary email — see AGENTS.md, Unsupervised mode
+# step 5. It is here deliberately: mail is the one path by which content leaves
+# the container, so it is the pair (package + mount) that has to be reviewed
+# together. If the summary email is ever dropped, remove both in the same change
+# rather than leaving the binary without the config or the config without a
+# reason.
 
 CMD ["sleep", "infinity"]
