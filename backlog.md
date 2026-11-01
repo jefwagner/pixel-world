@@ -14,3 +14,6 @@ See `AGENTS.md` for the two-file planning model.
   code fault.
 - Revisit the `kb/Camera-Snapping-and-Scrolling.md` wording about sub-pixel
   crop offsets after Step 6 character-follow lands.
+- Clarify `kb/Pixel-Perfect-Rendering.md` / `Pixel-Math.md`: the 20×10 diagonal
+  is the theoretical outline; the authored/rasterised cell is 20×9. Revisit
+  once the authoring format is stable.
