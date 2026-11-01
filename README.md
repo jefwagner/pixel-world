@@ -71,7 +71,9 @@ node --test www/projection.test.mjs www/snapshotPixels.test.mjs www/tiles.test.m
 The GPU half cannot run in Node, so it is verified in the browser instead: open
 the demo and run `(await snapshot()).hash` in the console, then compare it with
 the baseline recorded alongside the change (currently in `todo.md`). That is a
-real pixel diff rather than an eyeball judgement.
+real pixel diff rather than an eyeball judgement. `await verifyTile()` goes
+further: it compares the rendered tile cell with the authored manifest cell for
+the current view.
 
 ## Layout
 

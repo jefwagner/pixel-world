@@ -31,12 +31,18 @@ import {
   bytesPerRowAligned,
   unpadRows,
   summarise,
+  toRgba,
+  cropRgba,
+  rgbBounds,
+  hashRgb,
 } from './snapshotPixels.mjs';
 
 import {
   sceneParams,
   sheetFor,
   validateManifest,
+  viewCell,
+  viewNameForAzimuth,
 } from './tiles.mjs';
 
 // All mutable renderer state, in one object. cameraView is read by the scene
@@ -52,6 +58,7 @@ const state = {
   scene: null,
   present: null,
   manifest: null,
+  sheets: null,
   tileName: 'flower_01',
 
   // Continuous camera target in world space. The camera itself is snapped
@@ -151,6 +158,77 @@ async function snapshot({ window: visibleWindow = false } = {}) {
 // Exposed for console use. The render loop does not call this — a snapshot
 // every frame would bury the console.
 window.snapshot = snapshot;
+
+// Compare the rendered cell with the authored manifest cell for the current
+// view. RGB only: the authored cell's transparent corners have RGB 0, and the
+// scene pass clears to opaque black, so alpha is not comparable.
+async function verifyTile() {
+  // Let the loop render the current view before copying the buffer.
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+  const view = VIEWS[state.viewIndex];
+  const viewName = viewNameForAzimuth(view.azimuth);
+  const { sheet, rect } = viewCell(state.manifest, state.tileName, view.azimuth);
+
+  const snap = await snapshotBuffer(
+    state.device, state.sceneTexture, BUFFER_WIDTH, BUFFER_HEIGHT, state.format,
+  );
+  const rgba = toRgba(snap.data, snap.format);
+  const bounds = rgbBounds(rgba, snap.width, snap.height);
+
+  if (!bounds) {
+    const failed = {
+      ok: false,
+      viewName,
+      tileName: state.tileName,
+      bounds: null,
+      renderedHash: null,
+      authoredHash: null,
+    };
+    console.error(`[verifyTile] FAIL view=${viewName} tile=${state.tileName}: empty render`);
+    return failed;
+  }
+
+  const rendered = cropRgba(
+    rgba, snap.width, snap.height,
+    bounds.x, bounds.y, bounds.width, bounds.height,
+  );
+  const renderedHash = hashRgb(rendered);
+
+  const canvas2d = document.createElement('canvas');
+  canvas2d.width = rect.width;
+  canvas2d.height = rect.height;
+  const context2d = canvas2d.getContext('2d');
+  context2d.drawImage(
+    state.sheets[sheet.name],
+    rect.x, rect.y, rect.width, rect.height,
+    0, 0, rect.width, rect.height,
+  );
+  const authoredHash = hashRgb(
+    context2d.getImageData(0, 0, rect.width, rect.height).data,
+  );
+
+  const ok = bounds.width === rect.width &&
+    bounds.height === rect.height &&
+    renderedHash === authoredHash;
+
+  const result = {
+    ok,
+    viewName,
+    tileName: state.tileName,
+    bounds,
+    rect: { ...rect },
+    renderedHash,
+    authoredHash,
+  };
+  console.log(
+    `[verifyTile] ${ok ? 'ok' : 'FAIL'} view=${viewName} tile=${state.tileName} ` +
+    `bbox=${bounds.width}x${bounds.height} ` +
+    `rendered=${renderedHash} authored=${authoredHash}`,
+  );
+  return result;
+}
+window.verifyTile = verifyTile;
 
 // Get a handle to the gpu adaptor and device
 // - early exit with error message is missing
@@ -607,6 +685,10 @@ async function init() {
 
   const assets = await createAssets(state.device);
   state.manifest = assets.manifest;
+  state.sheets = {
+    cardinal: assets.cardinalBitmap,
+    diagonal: assets.diagonalBitmap,
+  };
 
   state.sceneTexture = createSceneTexture(state.device, state.format);
   state.sceneTextureView = state.sceneTexture.createView();

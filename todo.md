@@ -90,7 +90,7 @@ instancing are Step 4.
   per-view sweep was taken after an arrow nudge to z=0.590, so those hashes are
   not canonical; item 3 records fingerprints systematically.
 
-- [ ] **3. Make the 1:1 claim falsifiable**
+- [x] **3. Make the 1:1 claim falsifiable**
 
   Add a rendered-cell versus authored-cell comparison so "1:1" is a hash check,
   not an eyeball judgement.
@@ -107,6 +107,23 @@ instancing are Step 4.
   **Acceptance:** `verifyTile()` returns true at all 8 views for `flower_01`;
   the reported bbox is 14×7 for cardinals and 20×9 for diagonals; the per-view
   fingerprints are recorded.
+
+  **Verified (browser, hard reload):** `verifyTile()` is ok at all eight views;
+  bbox 14×7 for cardinals and 20×9 for diagonals. RGB hashes (rendered ==
+  authored):
+
+  | view | hash |
+  |---|---|
+  | N | `fc77bfbb` |
+  | NE | `20b5d441` |
+  | E | `1cf3e06a` |
+  | SE | `532501c9` |
+  | S | `21f53615` |
+  | SW | `532501c9` |
+  | W | `e4af3fc0` |
+  | NW | `20b5d441` |
+
+  Startup snapshots remain `e1330b15` (buffer) / `a42a9c15` (window).
 
 - [ ] **4. Cycle the 16 flower variants and confirm orientation**
 
