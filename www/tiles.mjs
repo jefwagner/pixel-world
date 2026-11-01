@@ -46,6 +46,45 @@ const FULL_TURN = 360;
 const isPositiveInteger = (value) => Number.isInteger(value) && value > 0;
 const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
 
+// The camera's square UVs rotate with the view, while the authored cells are
+// pre-rotated. This table is the inverse orientation needed before the
+// square-to-diamond transform; it keeps the rendered cell pixel-identical to
+// the authored cell rather than rotating it at sample time.
+const UV_ORIENTATIONS = Object.freeze({
+  N:  Object.freeze({ m00: -1, m01: 0, m10: 0, m11: 1, offsetX: 1, offsetY: 0 }),
+  E:  Object.freeze({ m00: 0, m01: 1, m10: 1, m11: 0, offsetX: 0, offsetY: 0 }),
+  S:  Object.freeze({ m00: 1, m01: 0, m10: 0, m11: -1, offsetX: 0, offsetY: 1 }),
+  W:  Object.freeze({ m00: 0, m01: -1, m10: -1, m11: 0, offsetX: 1, offsetY: 1 }),
+  NE: Object.freeze({ m00: 0, m01: 1, m10: -1, m11: 0, offsetX: 0, offsetY: 1 }),
+  SE: Object.freeze({ m00: 1, m01: 0, m10: 0, m11: 1, offsetX: 0, offsetY: 0 }),
+  SW: Object.freeze({ m00: 0, m01: -1, m10: 1, m11: 0, offsetX: 1, offsetY: 0 }),
+  NW: Object.freeze({ m00: -1, m01: 0, m10: 0, m11: -1, offsetX: 1, offsetY: 1 }),
+});
+
+/**
+ * @typedef {Object} UvOrientation
+ * @property {number} m00
+ * @property {number} m01
+ * @property {number} m10
+ * @property {number} m11
+ * @property {number} offsetX
+ * @property {number} offsetY
+ */
+
+/**
+ * Square-UV orientation for a compass view.
+ *
+ * @param {'N'|'NE'|'E'|'SE'|'S'|'SW'|'W'|'NW'} viewName
+ * @returns {UvOrientation}
+ */
+export function viewUvOrientation(viewName) {
+  const orientation = UV_ORIENTATIONS[viewName];
+  if (!orientation) {
+    throw new Error(`unknown view: ${viewName}`);
+  }
+  return orientation;
+}
+
 /**
  * Compass name for an azimuth, normalised modulo 360.
  *
@@ -205,6 +244,66 @@ export function normaliseRect(rect, sheetWidth, sheetHeight) {
     (rect.x + rect.width) / sheetWidth,
     (rect.y + rect.height) / sheetHeight,
   ]);
+}
+
+/**
+ * @typedef {Object} SceneParams
+ * @property {string} sheetName
+ * @property {Float32Array} values  16 floats for the scene uniform
+ */
+
+/**
+ * Base cell transform composed with the view's square-UV orientation.
+ *
+ * @param {'cardinal'|'diagonal'} kind
+ * @param {'N'|'NE'|'E'|'SE'|'S'|'SW'|'W'|'NW'} viewName
+ * @returns {CellTransform}
+ */
+export function orientedCellTransform(kind, viewName) {
+  const base = cellTransform(kind);
+  const orientation = viewUvOrientation(viewName);
+
+  return {
+    m00: base.m00 * orientation.m00 + base.m01 * orientation.m10,
+    m01: base.m00 * orientation.m01 + base.m01 * orientation.m11,
+    m10: base.m10 * orientation.m00 + base.m11 * orientation.m10,
+    m11: base.m10 * orientation.m01 + base.m11 * orientation.m11,
+    offsetX: base.m00 * orientation.offsetX + base.m01 * orientation.offsetY + base.offsetX,
+    offsetY: base.m10 * orientation.offsetX + base.m11 * orientation.offsetY + base.offsetY,
+    width: base.width,
+    height: base.height,
+  };
+}
+
+/**
+ * Pack the selected cell into the scene-pass uniform.
+ *
+ * Layout: [m00,m01,m10,m11, offsetX,offsetY,cellWidth,cellHeight,
+ *          u0,v0,u1,v1, diagonalFlag,0,0,0].
+ *
+ * @param {object} manifest
+ * @param {string} tileName
+ * @param {number} azimuth
+ * @returns {SceneParams}
+ */
+export function sceneParams(manifest, tileName, azimuth) {
+  const { sheet, rect } = viewCell(manifest, tileName, azimuth);
+  const transform = orientedCellTransform(sheet.name, viewNameForAzimuth(azimuth));
+  const uv = normaliseRect(rect, sheet.width, sheet.height);
+
+  const values = new Float32Array(16);
+  values[0] = transform.m00;
+  values[1] = transform.m01;
+  values[2] = transform.m10;
+  values[3] = transform.m11;
+  values[4] = transform.offsetX;
+  values[5] = transform.offsetY;
+  values[6] = transform.width;
+  values[7] = transform.height;
+  values.set(uv, 8);
+  values[12] = sheet.name === 'diagonal' ? 1 : 0;
+
+  return { sheetName: sheet.name, values };
 }
 
 /**

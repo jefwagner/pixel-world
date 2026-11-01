@@ -1,9 +1,10 @@
 // Demo of WebGPU rendering
 //
-// The renderer's two halves are split across three modules:
+// The renderer's pure halves are split across modules:
 //
 //   projection.mjs     - pure projection constants and matrix maths (no GPU)
 //   snapshotPixels.mjs - pure pixel helpers for readback (no GPU)
+//   tiles.mjs          - manifest, view-cell and UV-transform helpers (no GPU)
 //   demo.js            - this file: WebGPU setup, per-frame encoding, loop
 //
 // The split exists so the first two can be unit-tested with `node --test`,
@@ -32,6 +33,12 @@ import {
   summarise,
 } from './snapshotPixels.mjs';
 
+import {
+  sceneParams,
+  sheetFor,
+  validateManifest,
+} from './tiles.mjs';
+
 // All mutable renderer state, in one object. cameraView is read by the scene
 // pass on every frame, so changing it here takes effect on the next frame
 // with no separate invalidation step.
@@ -44,6 +51,8 @@ const state = {
   sceneTextureView: null,
   scene: null,
   present: null,
+  manifest: null,
+  tileName: 'flower_01',
 
   // Continuous camera target in world space. The camera itself is snapped
   // each frame; this target stays continuous so the crop absorbs the
@@ -170,16 +179,36 @@ async function initGPU() {
   return { device, context, format };
 }
 
-// Load the two assets the pipeline needs: the texture image and the compiled
-// shader. Everything else is derived from these.
+// Load the flower manifest, its two spritesheets, and the compiled shader.
+// Everything else is derived from these.
 //
 // @param {GPUDevice} device
-// @returns {Promise<{imageBitmap: ImageBitmap, shaderModule: GPUShaderModule}>}
+// @returns {Promise<{manifest: object, cardinalBitmap: ImageBitmap,
+//                    diagonalBitmap: ImageBitmap,
+//                    shaderModule: GPUShaderModule}>}
 async function createAssets(device) {
-  console.log("Loading texture");
-  const imageResponse = await fetch('./color-squares.png');
-  const imageBlob = await imageResponse.blob();
-  const imageBitmap = await createImageBitmap(imageBlob);
+  console.log("Loading flower manifest");
+  const manifestResponse = await fetch('./assets/flowers/flowers.json');
+  if (!manifestResponse.ok) {
+    throw new Error(`failed to load flowers.json: ${manifestResponse.status}`);
+  }
+  const manifest = validateManifest(await manifestResponse.json());
+
+  const loadSheet = async (name) => {
+    const sheet = sheetFor(manifest, name);
+    const url = new URL(sheet.file, manifestResponse.url);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`failed to load ${sheet.file}: ${response.status}`);
+    }
+    return createImageBitmap(await response.blob());
+  };
+
+  console.log("Loading spritesheets");
+  const [cardinalBitmap, diagonalBitmap] = await Promise.all([
+    loadSheet('cardinal'),
+    loadSheet('diagonal'),
+  ]);
 
   console.log("Loading shader");
   const shaderResponse = await fetch("./shader.wgsl");
@@ -187,7 +216,7 @@ async function createAssets(device) {
   const shaderModule = device.createShaderModule({ code: shaderCode });
   console.log("...shader compiled successfully");
 
-  return { imageBitmap, shaderModule };
+  return { manifest, cardinalBitmap, diagonalBitmap, shaderModule };
 }
 
 // The internal low-res render target. Larger than the visible window in both
@@ -208,16 +237,35 @@ function createSceneTexture(device, format) {
   });
 }
 
-// Buffers, texture, bind group and pipeline for the scene pass.
+// Upload one RGBA spritesheet to a sampled texture.
+function createImageTexture(device, imageBitmap) {
+  const texture = device.createTexture({
+    size: [imageBitmap.width, imageBitmap.height, 1],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING |
+           GPUTextureUsage.COPY_DST |
+           GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  device.queue.copyExternalImageToTexture(
+    { source: imageBitmap },
+    { texture },
+    [imageBitmap.width, imageBitmap.height],
+  );
+  return texture;
+}
+
+// Buffers, textures, bind group and pipeline for the scene pass.
 //
 // Each vertex is 5 floats: x,y,z followed by u,v. Position and uv share one
 // array because for static data the cache locality is better than two.
 //
 // @param {GPUDevice} device
-// @param {{imageBitmap: ImageBitmap, shaderModule: GPUShaderModule}} assets
+// @param {{cardinalBitmap: ImageBitmap, diagonalBitmap: ImageBitmap,
+//          shaderModule: GPUShaderModule}} assets
 // @param {string} format
 // @returns {object} scene resources consumed by renderFrame
-function createSceneResources(device, assets, format) {  const { imageBitmap, shaderModule } = assets;
+function createSceneResources(device, assets, format) {
+  const { cardinalBitmap, diagonalBitmap, shaderModule } = assets;
 
   // Create the vertex array
   console.log("Creating vertex/attribute array");
@@ -252,26 +300,20 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
   });
   device.queue.writeBuffer(indexBuffer, 0, indices);
 
-  // The camera matrix is rewritten every frame, so this buffer is created
-  // once and never resized.
+  // Both uniforms are rewritten every frame, so they are created once and
+  // never resized.
   const cameraBuffer = device.createBuffer({
     size: 16 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-
-  console.log("Creating texture for GPU");
-  const texture = device.createTexture({
-    size: [imageBitmap.width, imageBitmap.height, 1],
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING |
-           GPUTextureUsage.COPY_DST |
-           GPUTextureUsage.RENDER_ATTACHMENT,
+  const paramsBuffer = device.createBuffer({
+    size: 16 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  device.queue.copyExternalImageToTexture(
-    { source: imageBitmap },
-    { texture: texture },
-    [ imageBitmap.width, imageBitmap.height],
-  );
+
+  console.log("Creating spritesheet textures");
+  const cardinalTexture = createImageTexture(device, cardinalBitmap);
+  const diagonalTexture = createImageTexture(device, diagonalBitmap);
 
   // Note: addressModeU/V are left at their default of 'clamp-to-edge'.
   // That is correct for a single quad; it becomes load-bearing in roadmap
@@ -299,7 +341,17 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
       {
         binding: 2,
         visibility: GPUShaderStage.FRAGMENT,
-        texture: {}, // sampleType: 'float' is the default
+        texture: {}, // cardinal sheet
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: {}, // diagonal sheet
+      },
+      {
+        binding: 4,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: 'uniform' },
       },
     ],
   });
@@ -308,7 +360,9 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
     entries: [
       { binding: 0, resource: { buffer: cameraBuffer } },
       { binding: 1, resource: sampler },
-      { binding: 2, resource: texture.createView() },
+      { binding: 2, resource: cardinalTexture.createView() },
+      { binding: 3, resource: diagonalTexture.createView() },
+      { binding: 4, resource: { buffer: paramsBuffer } },
     ],
   });
 
@@ -354,6 +408,7 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
     indexBuffer,
     indexCount: indices.length,
     cameraBuffer,
+    paramsBuffer,
     pipeline: scenePipeline,
     bindGroup: sceneBindGroup,
     sampler,
@@ -437,12 +492,16 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
 // cached. At this scale that is free, and it means edits to viewIndex or
 // viewTarget take effect on the next frame with no invalidation step.
 function renderFrame() {
-  const placed = placeCamera(VIEWS[state.viewIndex], state.viewTarget);
+  const view = VIEWS[state.viewIndex];
+  const placed = placeCamera(view, state.viewTarget);
   state.cameraView = placed.cameraView;
   state.cropOffset = placed.cropOffset;
 
   const cameraMatrix = createCamera(state.cameraView);
   state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
+  state.device.queue.writeBuffer(state.scene.paramsBuffer, 0, sceneParams(
+    state.manifest, state.tileName, view.azimuth,
+  ).values);
   state.device.queue.writeBuffer(state.present.windowBuffer, 0, placed.windowRect);
 
   // There can be no async calls between getting the canvas texture and
@@ -547,6 +606,7 @@ async function init() {
   state.format = gpu.format;
 
   const assets = await createAssets(state.device);
+  state.manifest = assets.manifest;
 
   state.sceneTexture = createSceneTexture(state.device, state.format);
   state.sceneTextureView = state.sceneTexture.createView();

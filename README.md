@@ -87,7 +87,6 @@ it is exposed over HTTP.
 | `www/tiles.mjs` | pure manifest, view-cell and UV-to-texel helpers (Node-testable) |
 | `www/projection.test.mjs`, `www/snapshotPixels.test.mjs`, `www/tiles.test.mjs` | `node --test` suites for the pure modules |
 | `www/shader.wgsl` | vertex + fragment shaders |
-| `www/color-squares.png` | the texture the demo samples (retired in Step 3) |
 | `www/assets/flowers/` | authored cardinal/diagonal spritesheets + `flowers.json` manifest |
 | `notes/flowers-output-format.md` | the flower generator's output contract |
 | `roadmap.md` | learning-session roadmap and current state |

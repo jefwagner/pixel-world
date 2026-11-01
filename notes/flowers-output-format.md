@@ -112,6 +112,12 @@ def save_projection(result: Projection, out_dir: Path, name: str) -> None:
 
 - The four orientations of each view class are exact 90° counter-clockwise
   source transposes, in manifest order.
+- The consumer must apply the matching view orientation to its square UVs
+  before the square-to-diamond transform. The camera's UVs rotate with the
+  view; the inverse dihedral map is N `(1-u, v)`, E `(v, u)`, S `(u, 1-v)`,
+  W `(1-v, 1-u)`, NE `(v, 1-u)`, SE `(u, v)`, SW `(1-v, u)`,
+  NW `(1-u, 1-v)`. With that map the rendered cell is pixel-identical to the
+  authored cell; the texture is not rotated at sample time.
 - Diagonal sampling inverts the square-to-diamond mapping for each output texel
   centre. The diamond is centred at `(10, 4.5)` and its outline extends half a
   pixel beyond the top and bottom rows; that is what produces the agreed

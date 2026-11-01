@@ -149,6 +149,9 @@ selecting by uniform.
   Cardinal: `(14u, 7v)`. Diagonal: `(10(u+v), 4.5 + 5(u−v))` — a 20×9 cell,
   not the 20×10 theoretical outline; the 4.5 offset centres the rasterised
   9-row `4,8,12,16,20,16,12,8,4` profile.
+- Compose the view's dihedral square-UV orientation before the cell transform.
+  The camera's UVs rotate with the view, while the cells are pre-rotated; the
+  orientation map keeps the authored cell unrotated on screen.
 - Load both sheets as textures and add a params uniform (affine transform, cell
   size, normalised atlas rect) to the scene bind group; add the second texture
   binding. Keep one quad and one tile (`flower_01`).

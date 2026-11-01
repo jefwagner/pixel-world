@@ -10,6 +10,9 @@ import {
   viewCell,
   normaliseRect,
   cellTransform,
+  viewUvOrientation,
+  orientedCellTransform,
+  sceneParams,
 } from "./tiles.mjs";
 
 const AZIMUTHS = [0, 45, 90, 135, 180, 225, 270, 315];
@@ -64,6 +67,29 @@ test("viewNameForAzimuth rejects non-multiples of 45", () => {
   for (const azimuth of [30, 22.5, NaN]) {
     assert.throws(() => viewNameForAzimuth(azimuth), /azimuth/);
   }
+});
+
+// --- viewUvOrientation -------------------------------------------------
+
+test("viewUvOrientation returns the view's square-UV map", () => {
+  const expected = {
+    N:  { m00: -1, m01: 0, m10: 0, m11: 1, offsetX: 1, offsetY: 0 },
+    E:  { m00: 0, m01: 1, m10: 1, m11: 0, offsetX: 0, offsetY: 0 },
+    S:  { m00: 1, m01: 0, m10: 0, m11: -1, offsetX: 0, offsetY: 1 },
+    W:  { m00: 0, m01: -1, m10: -1, m11: 0, offsetX: 1, offsetY: 1 },
+    NE: { m00: 0, m01: 1, m10: -1, m11: 0, offsetX: 0, offsetY: 1 },
+    SE: { m00: 1, m01: 0, m10: 0, m11: 1, offsetX: 0, offsetY: 0 },
+    SW: { m00: 0, m01: -1, m10: 1, m11: 0, offsetX: 1, offsetY: 0 },
+    NW: { m00: -1, m01: 0, m10: 0, m11: -1, offsetX: 1, offsetY: 1 },
+  };
+
+  for (const [viewName, orientation] of Object.entries(expected)) {
+    assert.deepEqual(viewUvOrientation(viewName), orientation, viewName);
+  }
+});
+
+test("viewUvOrientation rejects an unknown view", () => {
+  assert.throws(() => viewUvOrientation("UP"), /unknown view/);
 });
 
 // --- validateManifest --------------------------------------------------
@@ -222,6 +248,55 @@ test("normaliseRect maps a cell to atlas UV", () => {
   assert.deepEqual([...diagonal], [0.25, 0.0625, 0.5, 0.125]);
 });
 
+// --- sceneParams -------------------------------------------------------
+
+test("sceneParams packs the cardinal cell", () => {
+  const { sheetName, values } = sceneParams(realManifest(), "flower_01", 0);
+  assert.equal(sheetName, "cardinal");
+  assert.ok(values instanceof Float32Array);
+  assert.equal(values.length, 16);
+  assert.deepEqual([...values.slice(0, 4)], [-14, 0, 0, 7]);
+  assert.deepEqual([...values.slice(4, 8)], [14, 0, 14, 7]);
+  assert.deepEqual([...values.slice(8, 12)], [0, 0, 0.25, 0.0625]);
+  assert.deepEqual([...values.slice(12, 16)], [0, 0, 0, 0]);
+});
+
+test("sceneParams packs the diagonal cell", () => {
+  const { sheetName, values } = sceneParams(realManifest(), "flower_01", 45);
+  assert.equal(sheetName, "diagonal");
+  assert.equal(values.length, 16);
+  assert.deepEqual([...values.slice(0, 4)], [-10, 10, 5, 5]);
+  assert.deepEqual([...values.slice(4, 8)], [10, -0.5, 20, 9]);
+  assert.deepEqual([...values.slice(8, 12)], [0, 0, 0.25, 0.0625]);
+  assert.deepEqual([...values.slice(12, 16)], [1, 0, 0, 0]);
+});
+
+test("sceneParams normalises non-origin cells", () => {
+  const east = sceneParams(realManifest(), "flower_01", 90);
+  assert.deepEqual([...east.values.slice(8, 12)], [0.25, 0, 0.5, 0.0625]);
+
+  const northwest = sceneParams(realManifest(), "flower_01", 315);
+  assert.deepEqual([...northwest.values.slice(8, 12)], [0.75, 0, 1, 0.0625]);
+});
+
+test("sceneParams covers every tile and view", () => {
+  const manifest = realManifest();
+
+  for (const tileName of Object.keys(manifest.tiles)) {
+    for (const azimuth of AZIMUTHS) {
+      const { sheetName, values } = sceneParams(manifest, tileName, azimuth);
+      const { sheet, rect } = viewCell(manifest, tileName, azimuth);
+
+      assert.equal(sheetName, sheet.name, `${tileName}/${azimuth}`);
+      assert.equal(values.length, 16);
+      assert.ok([...values].every(Number.isFinite), `${tileName}/${azimuth} finite`);
+      assert.ok(values[8] >= 0 && values[8] < values[10] && values[10] <= 1);
+      assert.ok(values[9] >= 0 && values[9] < values[11] && values[11] <= 1);
+      assert.equal(values[12], sheet.name === "diagonal" ? 1 : 0);
+    }
+  }
+});
+
 // --- cellTransform -----------------------------------------------------
 
 const applyTransform = (t, u, v) => [
@@ -257,4 +332,44 @@ test("cellTransform returns the diagonal 20x9 affine map", () => {
 
 test("cellTransform rejects an unknown kind", () => {
   assert.throws(() => cellTransform("isometric"), /unknown view kind/);
+});
+
+// --- orientedCellTransform ---------------------------------------------
+
+test("orientedCellTransform composes the cardinal orientations", () => {
+  const expected = {
+    N: { m00: -14, m01: 0, m10: 0, m11: 7, offsetX: 14, offsetY: 0, width: 14, height: 7 },
+    E: { m00: 0, m01: 14, m10: 7, m11: 0, offsetX: 0, offsetY: 0, width: 14, height: 7 },
+    S: { m00: 14, m01: 0, m10: 0, m11: -7, offsetX: 0, offsetY: 7, width: 14, height: 7 },
+    W: { m00: 0, m01: -14, m10: -7, m11: 0, offsetX: 14, offsetY: 7, width: 14, height: 7 },
+  };
+
+  for (const [viewName, transform] of Object.entries(expected)) {
+    assert.deepEqual(orientedCellTransform("cardinal", viewName), transform, viewName);
+  }
+});
+
+test("orientedCellTransform composes the diagonal orientations", () => {
+  const expected = {
+    NE: { m00: -10, m01: 10, m10: 5, m11: 5, offsetX: 10, offsetY: -0.5, width: 20, height: 9 },
+    SE: { m00: 10, m01: 10, m10: 5, m11: -5, offsetX: 0, offsetY: 4.5, width: 20, height: 9 },
+    SW: { m00: 10, m01: -10, m10: -5, m11: -5, offsetX: 10, offsetY: 9.5, width: 20, height: 9 },
+    NW: { m00: -10, m01: -10, m10: -5, m11: 5, offsetX: 20, offsetY: 4.5, width: 20, height: 9 },
+  };
+
+  for (const [viewName, transform] of Object.entries(expected)) {
+    assert.deepEqual(orientedCellTransform("diagonal", viewName), transform, viewName);
+  }
+});
+
+test("orientedCellTransform preserves the cell centre", () => {
+  for (const viewName of COMPASS_VIEWS) {
+    const kind = viewName.length === 1 ? "cardinal" : "diagonal";
+    const t = orientedCellTransform(kind, viewName);
+    assert.deepEqual(
+      applyTransform(t, 0.5, 0.5),
+      [t.width / 2, t.height / 2],
+      viewName,
+    );
+  }
 });

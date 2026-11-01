@@ -56,7 +56,7 @@ instancing are Step 4.
   **Verified:** 87 tests pass; the real flower manifest validates with
   `width`/`height` fields; no renderer files changed.
 
-- [ ] **2. Bind both sheets and sample the authored view cell**
+- [x] **2. Bind both sheets and sample the authored view cell**
 
   Load the two spritesheets, select the current view's manifest cell, and apply
   the transform in the scene shader.
@@ -66,8 +66,10 @@ instancing are Step 4.
   - Scene bind group: camera uniform (0), sampler (1), cardinal texture (2),
     diagonal texture (3), scene-params uniform (4).
   - Scene params: affine transform, cell offset/size, and the normalised atlas
-    rect. Compute them per frame from `viewCell(...)`/`cellTransform(...)` for
-    `flower_01` and the current `viewIndex`.
+    rect. Compute them per frame from `viewCell(...)` and
+    `orientedCellTransform(...)` for `flower_01` and the current `viewIndex`.
+    The view orientation (`viewUvOrientation`) is the inverse of the camera's
+    UV rotation; the authored cell is sampled unrotated.
   - Fragment shader selects the sheet by kind, maps square UV → cell → atlas UV,
     and samples nearest/clamp.
   - `V` now selects the compass cell for the current azimuth. Retire
@@ -75,8 +77,18 @@ instancing are Step 4.
 
   **Acceptance:** all 8 views render without WGSL errors; the rendered cell is
   1:1 with the authored cell (cardinal 14×7, diagonal 20×9 with the 9-row
-  pattern); no square-UV smearing; `V` selects the expected compass cell; new
-  full-buffer and window baselines are recorded here.
+  pattern); no square-UV smearing and no visible rotation; `V` selects the
+  expected compass cell; new full-buffer and window baselines are recorded here.
+
+  **CPU pre-check:** with the dihedral orientation map, the shader simulation
+  matches the authored cell RGB for all 16 tiles × 8 views (0 mismatches), and
+  every diagonal still rasterises the 9-row profile.
+
+  **Verified (browser, hard reload, new sheets):** all 8 views render, no WGSL
+  errors; diagonals `4,8,12,16,20,16,12,8,4`, cardinals `14×7`. Startup (index
+  1, azimuth 45, target z=0.600): buffer `e1330b15`, window `a42a9c15`. A later
+  per-view sweep was taken after an arrow nudge to z=0.590, so those hashes are
+  not canonical; item 3 records fingerprints systematically.
 
 - [ ] **3. Make the 1:1 claim falsifiable**
 
@@ -125,6 +137,12 @@ instancing are Step 4.
 - **Compass mapping:** start with azimuth 0→N, 45→NE, … 315→NW, matching the
   manifest's N/E/S/W and NE/SE/SW/NW order. Verify the rotation direction in
   item 4; the flower art makes the check visual rather than mathematical.
+- **Per-view UV orientation is not a texture rotation.** The camera's UVs
+  rotate with the view, so the pre-rotated cells need the inverse dihedral map
+  before the cell transform: N flipU, E transpose, S flipV, W anti-transpose,
+  NE 90° CW, SE identity, SW 90° CCW, NW 180°. With that map the rendered cell
+  is pixel-identical to the authored cell; the texture is never rotated at
+  sample time. Verified against all 16 tiles × 8 views.
 - **The old `color-squares.png` is retired** once the flower sheets are wired.
 - **Backlog:** the existing entries (tests inside `www/`, nginx `.mjs` MIME,
   tailnet stale mount, kb crop wording) are unrelated to Step 3 and stay parked.
