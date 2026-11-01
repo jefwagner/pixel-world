@@ -27,7 +27,7 @@ instancing are Step 4.
 
 ## Items
 
-- [ ] **1. Adopt the flower spritesheets and add a pure tile/view module**
+- [x] **1. Adopt the flower spritesheets and add a pure tile/view module**
 
   Move the temporary assets into the repo and make the manifest, view mapping,
   and UV→cell maths testable before any GPU work.
@@ -52,6 +52,9 @@ instancing are Step 4.
   views; cardinal corners map to `(0,0)/(14,0)/(14,7)/(0,7)`; diagonal corners
   map to the theoretical 20×10 tips and the centre maps to `(10,4.5)`; the
   current rendered frame is unchanged (still `color-squares.png`).
+
+  **Verified:** 87 tests pass; the real flower manifest validates with
+  `width`/`height` fields; no renderer files changed.
 
 - [ ] **2. Bind both sheets and sample the authored view cell**
 

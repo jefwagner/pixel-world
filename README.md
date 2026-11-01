@@ -65,7 +65,7 @@ The pure halves of the renderer run under Node's built-in test runner — there 
 no npm project:
 
 ```bash
-node --test www/projection.test.mjs www/snapshotPixels.test.mjs
+node --test www/projection.test.mjs www/snapshotPixels.test.mjs www/tiles.test.mjs
 ```
 
 The GPU half cannot run in Node, so it is verified in the browser instead: open
@@ -84,9 +84,12 @@ it is exposed over HTTP.
 | `www/demo.js` | the renderer: device setup, pipelines, per-frame encode, render loop |
 | `www/projection.mjs` | pure projection constants and matrix maths (Node-testable) |
 | `www/snapshotPixels.mjs` | pure pixel helpers for readback and fingerprinting (Node-testable) |
-| `www/projection.test.mjs`, `www/snapshotPixels.test.mjs` | `node --test` suites for the two pure modules |
+| `www/tiles.mjs` | pure manifest, view-cell and UV-to-texel helpers (Node-testable) |
+| `www/projection.test.mjs`, `www/snapshotPixels.test.mjs`, `www/tiles.test.mjs` | `node --test` suites for the pure modules |
 | `www/shader.wgsl` | vertex + fragment shaders |
-| `www/color-squares.png` | the texture the demo samples |
+| `www/color-squares.png` | the texture the demo samples (retired in Step 3) |
+| `www/assets/flowers/` | authored cardinal/diagonal spritesheets + `flowers.json` manifest |
+| `notes/flowers-output-format.md` | the flower generator's output contract |
 | `roadmap.md` | learning-session roadmap and current state |
 | `todo.md` | session-scoped actionable items (1–4, one commit each) |
 | `backlog.md` | persistent idea parking lot |
