@@ -1,9 +1,10 @@
 // Demo of WebGPU rendering
 //
-// The renderer's two halves are split across three modules:
+// The renderer's pure halves are split across modules:
 //
 //   projection.mjs     - pure projection constants and matrix maths (no GPU)
 //   snapshotPixels.mjs - pure pixel helpers for readback (no GPU)
+//   tiles.mjs          - manifest, view-cell and UV-transform helpers (no GPU)
 //   demo.js            - this file: WebGPU setup, per-frame encoding, loop
 //
 // The split exists so the first two can be unit-tested with `node --test`,
@@ -30,7 +31,20 @@ import {
   bytesPerRowAligned,
   unpadRows,
   summarise,
+  toRgba,
+  cropRgba,
+  rgbBounds,
+  hashRgb,
 } from './snapshotPixels.mjs';
+
+import {
+  sceneParams,
+  sheetFor,
+  tileNames,
+  validateManifest,
+  viewCell,
+  viewNameForAzimuth,
+} from './tiles.mjs';
 
 // All mutable renderer state, in one object. cameraView is read by the scene
 // pass on every frame, so changing it here takes effect on the next frame
@@ -44,6 +58,10 @@ const state = {
   sceneTextureView: null,
   scene: null,
   present: null,
+  manifest: null,
+  sheets: null,
+  tileNames: null,
+  tileIndex: 0,
 
   // Continuous camera target in world space. The camera itself is snapped
   // each frame; this target stays continuous so the crop absorbs the
@@ -143,6 +161,90 @@ async function snapshot({ window: visibleWindow = false } = {}) {
 // every frame would bury the console.
 window.snapshot = snapshot;
 
+// Compare the rendered cell with the authored manifest cell for the current
+// view. RGB only: the authored cell's transparent corners have RGB 0, and the
+// scene pass clears to opaque black, so alpha is not comparable.
+async function verifyTile() {
+  // Let the loop render the current view before copying the buffer.
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+  const view = VIEWS[state.viewIndex];
+  const viewName = viewNameForAzimuth(view.azimuth);
+  const tileName = state.tileNames[state.tileIndex];
+  const { sheet, rect } = viewCell(state.manifest, tileName, view.azimuth);
+
+  const snap = await snapshotBuffer(
+    state.device, state.sceneTexture, BUFFER_WIDTH, BUFFER_HEIGHT, state.format,
+  );
+  const rgba = toRgba(snap.data, snap.format);
+  const bounds = rgbBounds(rgba, snap.width, snap.height);
+
+  if (!bounds) {
+    const failed = {
+      ok: false,
+      viewName,
+      tileName,
+      bounds: null,
+      renderedHash: null,
+      authoredHash: null,
+    };
+    console.error(`[verifyTile] FAIL view=${viewName} tile=${tileName}: empty render`);
+    return failed;
+  }
+
+  const rendered = cropRgba(
+    rgba, snap.width, snap.height,
+    bounds.x, bounds.y, bounds.width, bounds.height,
+  );
+  const renderedHash = hashRgb(rendered);
+
+  const canvas2d = document.createElement('canvas');
+  canvas2d.width = rect.width;
+  canvas2d.height = rect.height;
+  const context2d = canvas2d.getContext('2d');
+  context2d.drawImage(
+    state.sheets[sheet.name],
+    rect.x, rect.y, rect.width, rect.height,
+    0, 0, rect.width, rect.height,
+  );
+  const authoredHash = hashRgb(
+    context2d.getImageData(0, 0, rect.width, rect.height).data,
+  );
+
+  const ok = bounds.width === rect.width &&
+    bounds.height === rect.height &&
+    renderedHash === authoredHash;
+
+  const result = {
+    ok,
+    viewName,
+    tileName,
+    bounds,
+    rect: { ...rect },
+    renderedHash,
+    authoredHash,
+  };
+  console.log(
+    `[verifyTile] ${ok ? 'ok' : 'FAIL'} view=${viewName} tile=${tileName} ` +
+    `bbox=${bounds.width}x${bounds.height} ` +
+    `rendered=${renderedHash} authored=${authoredHash}`,
+  );
+  return result;
+}
+window.verifyTile = verifyTile;
+
+// Verify every flower variant at the current view. Leaves the last tile
+// selected; the results carry each tile's name and hashes.
+async function verifyAllTiles() {
+  const results = [];
+  for (let i = 0; i < state.tileNames.length; i++) {
+    state.tileIndex = i;
+    results.push(await verifyTile());
+  }
+  return results;
+}
+window.verifyAllTiles = verifyAllTiles;
+
 // Get a handle to the gpu adaptor and device
 // - early exit with error message is missing
 //
@@ -170,16 +272,36 @@ async function initGPU() {
   return { device, context, format };
 }
 
-// Load the two assets the pipeline needs: the texture image and the compiled
-// shader. Everything else is derived from these.
+// Load the flower manifest, its two spritesheets, and the compiled shader.
+// Everything else is derived from these.
 //
 // @param {GPUDevice} device
-// @returns {Promise<{imageBitmap: ImageBitmap, shaderModule: GPUShaderModule}>}
+// @returns {Promise<{manifest: object, cardinalBitmap: ImageBitmap,
+//                    diagonalBitmap: ImageBitmap,
+//                    shaderModule: GPUShaderModule}>}
 async function createAssets(device) {
-  console.log("Loading texture");
-  const imageResponse = await fetch('./color-squares.png');
-  const imageBlob = await imageResponse.blob();
-  const imageBitmap = await createImageBitmap(imageBlob);
+  console.log("Loading flower manifest");
+  const manifestResponse = await fetch('./assets/flowers/flowers.json');
+  if (!manifestResponse.ok) {
+    throw new Error(`failed to load flowers.json: ${manifestResponse.status}`);
+  }
+  const manifest = validateManifest(await manifestResponse.json());
+
+  const loadSheet = async (name) => {
+    const sheet = sheetFor(manifest, name);
+    const url = new URL(sheet.file, manifestResponse.url);
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`failed to load ${sheet.file}: ${response.status}`);
+    }
+    return createImageBitmap(await response.blob());
+  };
+
+  console.log("Loading spritesheets");
+  const [cardinalBitmap, diagonalBitmap] = await Promise.all([
+    loadSheet('cardinal'),
+    loadSheet('diagonal'),
+  ]);
 
   console.log("Loading shader");
   const shaderResponse = await fetch("./shader.wgsl");
@@ -187,7 +309,7 @@ async function createAssets(device) {
   const shaderModule = device.createShaderModule({ code: shaderCode });
   console.log("...shader compiled successfully");
 
-  return { imageBitmap, shaderModule };
+  return { manifest, cardinalBitmap, diagonalBitmap, shaderModule };
 }
 
 // The internal low-res render target. Larger than the visible window in both
@@ -208,16 +330,35 @@ function createSceneTexture(device, format) {
   });
 }
 
-// Buffers, texture, bind group and pipeline for the scene pass.
+// Upload one RGBA spritesheet to a sampled texture.
+function createImageTexture(device, imageBitmap) {
+  const texture = device.createTexture({
+    size: [imageBitmap.width, imageBitmap.height, 1],
+    format: 'rgba8unorm',
+    usage: GPUTextureUsage.TEXTURE_BINDING |
+           GPUTextureUsage.COPY_DST |
+           GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  device.queue.copyExternalImageToTexture(
+    { source: imageBitmap },
+    { texture },
+    [imageBitmap.width, imageBitmap.height],
+  );
+  return texture;
+}
+
+// Buffers, textures, bind group and pipeline for the scene pass.
 //
 // Each vertex is 5 floats: x,y,z followed by u,v. Position and uv share one
 // array because for static data the cache locality is better than two.
 //
 // @param {GPUDevice} device
-// @param {{imageBitmap: ImageBitmap, shaderModule: GPUShaderModule}} assets
+// @param {{cardinalBitmap: ImageBitmap, diagonalBitmap: ImageBitmap,
+//          shaderModule: GPUShaderModule}} assets
 // @param {string} format
 // @returns {object} scene resources consumed by renderFrame
-function createSceneResources(device, assets, format) {  const { imageBitmap, shaderModule } = assets;
+function createSceneResources(device, assets, format) {
+  const { cardinalBitmap, diagonalBitmap, shaderModule } = assets;
 
   // Create the vertex array
   console.log("Creating vertex/attribute array");
@@ -252,26 +393,20 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
   });
   device.queue.writeBuffer(indexBuffer, 0, indices);
 
-  // The camera matrix is rewritten every frame, so this buffer is created
-  // once and never resized.
+  // Both uniforms are rewritten every frame, so they are created once and
+  // never resized.
   const cameraBuffer = device.createBuffer({
     size: 16 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-
-  console.log("Creating texture for GPU");
-  const texture = device.createTexture({
-    size: [imageBitmap.width, imageBitmap.height, 1],
-    format: 'rgba8unorm',
-    usage: GPUTextureUsage.TEXTURE_BINDING |
-           GPUTextureUsage.COPY_DST |
-           GPUTextureUsage.RENDER_ATTACHMENT,
+  const paramsBuffer = device.createBuffer({
+    size: 16 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  device.queue.copyExternalImageToTexture(
-    { source: imageBitmap },
-    { texture: texture },
-    [ imageBitmap.width, imageBitmap.height],
-  );
+
+  console.log("Creating spritesheet textures");
+  const cardinalTexture = createImageTexture(device, cardinalBitmap);
+  const diagonalTexture = createImageTexture(device, diagonalBitmap);
 
   // Note: addressModeU/V are left at their default of 'clamp-to-edge'.
   // That is correct for a single quad; it becomes load-bearing in roadmap
@@ -299,7 +434,17 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
       {
         binding: 2,
         visibility: GPUShaderStage.FRAGMENT,
-        texture: {}, // sampleType: 'float' is the default
+        texture: {}, // cardinal sheet
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: {}, // diagonal sheet
+      },
+      {
+        binding: 4,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: 'uniform' },
       },
     ],
   });
@@ -308,7 +453,9 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
     entries: [
       { binding: 0, resource: { buffer: cameraBuffer } },
       { binding: 1, resource: sampler },
-      { binding: 2, resource: texture.createView() },
+      { binding: 2, resource: cardinalTexture.createView() },
+      { binding: 3, resource: diagonalTexture.createView() },
+      { binding: 4, resource: { buffer: paramsBuffer } },
     ],
   });
 
@@ -354,6 +501,7 @@ function createSceneResources(device, assets, format) {  const { imageBitmap, sh
     indexBuffer,
     indexCount: indices.length,
     cameraBuffer,
+    paramsBuffer,
     pipeline: scenePipeline,
     bindGroup: sceneBindGroup,
     sampler,
@@ -437,12 +585,16 @@ function createPresentResources(device, assets, format, sceneTextureView, sample
 // cached. At this scale that is free, and it means edits to viewIndex or
 // viewTarget take effect on the next frame with no invalidation step.
 function renderFrame() {
-  const placed = placeCamera(VIEWS[state.viewIndex], state.viewTarget);
+  const view = VIEWS[state.viewIndex];
+  const placed = placeCamera(view, state.viewTarget);
   state.cameraView = placed.cameraView;
   state.cropOffset = placed.cropOffset;
 
   const cameraMatrix = createCamera(state.cameraView);
   state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
+  state.device.queue.writeBuffer(state.scene.paramsBuffer, 0, sceneParams(
+    state.manifest, state.tileNames[state.tileIndex], view.azimuth,
+  ).values);
   state.device.queue.writeBuffer(state.present.windowBuffer, 0, placed.windowRect);
 
   // There can be no async calls between getting the canvas texture and
@@ -494,16 +646,26 @@ function startRenderLoop() {
   });
 }
 
-// Debug controls. V cycles the eight views. Arrows nudge the continuous view
-// target (Shift = quarter step), so the camera snaps at cell boundaries while
-// the crop window slides continuously.
+// Debug controls. V cycles the eight views; T cycles the flower variants.
+// Arrows nudge the continuous view target (Shift = quarter step), so the camera
+// snaps at cell boundaries while the crop window slides continuously.
 function installViewDebugKeys() {
   window.addEventListener('keydown', (event) => {
-    if (event.key.toLowerCase() === 'v') {
+    const key = event.key.toLowerCase();
+
+    if (key === 'v') {
       state.viewIndex = (state.viewIndex + 1) % VIEWS.length;
       const view = VIEWS[state.viewIndex];
       console.log(
         `[view] index=${state.viewIndex} azimuth=${view.azimuth} kind=${view.kind}`,
+      );
+      return;
+    }
+
+    if (key === 't') {
+      state.tileIndex = (state.tileIndex + 1) % state.tileNames.length;
+      console.log(
+        `[tile] index=${state.tileIndex} name=${state.tileNames[state.tileIndex]}`,
       );
       return;
     }
@@ -547,6 +709,12 @@ async function init() {
   state.format = gpu.format;
 
   const assets = await createAssets(state.device);
+  state.manifest = assets.manifest;
+  state.sheets = {
+    cardinal: assets.cardinalBitmap,
+    diagonal: assets.diagonalBitmap,
+  };
+  state.tileNames = tileNames(state.manifest);
 
   state.sceneTexture = createSceneTexture(state.device, state.format);
   state.sceneTextureView = state.sceneTexture.createView();

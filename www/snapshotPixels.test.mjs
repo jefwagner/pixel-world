@@ -9,6 +9,9 @@ import {
   rowWidths,
   hash,
   summarise,
+  cropRgba,
+  rgbBounds,
+  hashRgb,
 } from "./snapshotPixels.mjs";
 
 const rgba = (r, g, b, a = 255) => [r, g, b, a];
@@ -146,4 +149,104 @@ test("summarise composes count, shape and hash", () => {
   assert.equal(s.rowWidths, "1,1");
   assert.equal(typeof s.hash, "string");
   assert.ok(s.hash.length > 0);
+});
+
+
+// --- cropRgba ----------------------------------------------------------
+
+const makeRgba = (width, height, pixelAt) => {
+  const out = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      out.set(pixelAt(x, y), (y * width + x) * 4);
+    }
+  }
+  return out;
+};
+
+test("cropRgba copies an interior rectangle", () => {
+  const source = makeRgba(4, 3, (x, y) => [x, y, x + y, 255]);
+  const cropped = cropRgba(source, 4, 3, 1, 1, 2, 2);
+
+  assert.deepEqual([...cropped], [
+    1, 1, 2, 255,
+    2, 1, 3, 255,
+    1, 2, 3, 255,
+    2, 2, 4, 255,
+  ]);
+});
+
+test("cropRgba crops at the right and bottom edges", () => {
+  const source = makeRgba(4, 3, (x, y) => [x, y, x + y, 255]);
+  const cropped = cropRgba(source, 4, 3, 1, 1, 3, 2);
+
+  assert.deepEqual([...cropped], [
+    1, 1, 2, 255,
+    2, 1, 3, 255,
+    3, 1, 4, 255,
+    1, 2, 3, 255,
+    2, 2, 4, 255,
+    3, 2, 5, 255,
+  ]);
+});
+
+test("cropRgba rejects empty or out-of-bounds rectangles", () => {
+  const source = makeRgba(4, 3, (x, y) => [x, y, x + y, 255]);
+
+  assert.throws(() => cropRgba(source, 4, 3, 0, 0, 0, 1), /crop rectangle/);
+  assert.throws(() => cropRgba(source, 4, 3, 0, 0, 1, 0), /crop rectangle/);
+  assert.throws(() => cropRgba(source, 4, 3, -1, 0, 1, 1), /crop rectangle/);
+  assert.throws(() => cropRgba(source, 4, 3, 3, 0, 2, 1), /crop rectangle/);
+  assert.throws(() => cropRgba(source, 4, 3, 0, 2, 1, 2), /crop rectangle/);
+});
+
+// --- rgbBounds ---------------------------------------------------------
+
+test("rgbBounds returns null for an all-black buffer", () => {
+  const black = makeRgba(3, 2, () => [0, 0, 0, 255]);
+  assert.equal(rgbBounds(black, 3, 2), null);
+});
+
+test("rgbBounds finds a single non-black pixel", () => {
+  const px = makeRgba(5, 4, (x, y) => (
+    x === 2 && y === 1 ? [10, 0, 0, 255] : [0, 0, 0, 255]
+  ));
+  assert.deepEqual(rgbBounds(px, 5, 4), { x: 2, y: 1, width: 1, height: 1 });
+});
+
+test("rgbBounds computes a diamond's bounding box", () => {
+  const px = makeRgba(5, 5, (x, y) => (
+    Math.abs(x - 2) + Math.abs(y - 2) <= 1
+      ? [5, 5, 5, 255]
+      : [0, 0, 0, 255]
+  ));
+  assert.deepEqual(rgbBounds(px, 5, 5), { x: 1, y: 1, width: 3, height: 3 });
+});
+
+test("rgbBounds ignores alpha", () => {
+  const px = new Uint8Array([
+    0, 0, 0, 255,    // black, opaque
+    10, 0, 0, 0,     // coloured, transparent
+  ]);
+  assert.deepEqual(rgbBounds(px, 2, 1), { x: 1, y: 0, width: 1, height: 1 });
+});
+
+// --- hashRgb -----------------------------------------------------------
+
+test("hashRgb ignores alpha", () => {
+  const a = new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]);
+  const b = new Uint8Array([1, 2, 3, 0, 4, 5, 6, 128]);
+  assert.equal(hashRgb(a), hashRgb(b));
+});
+
+test("hashRgb changes when RGB changes", () => {
+  const a = new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]);
+  const b = new Uint8Array([1, 2, 4, 255, 4, 5, 6, 255]);
+  assert.notEqual(hashRgb(a), hashRgb(b));
+});
+
+test("hashRgb is order-sensitive", () => {
+  const a = new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255]);
+  const b = new Uint8Array([4, 5, 6, 255, 1, 2, 3, 255]);
+  assert.notEqual(hashRgb(a), hashRgb(b));
 });

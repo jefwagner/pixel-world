@@ -1,0 +1,947 @@
+{
+  "version": 1,
+  "spritesheets": [
+    {
+      "name": "cardinal",
+      "file": "flowers.cardinal.png",
+      "width": 56,
+      "height": 112
+    },
+    {
+      "name": "diagonal",
+      "file": "flowers.diagonal.png",
+      "width": 80,
+      "height": 144
+    }
+  ],
+  "tiles": {
+    "flower_01": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 0,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 0,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 0,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 0,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 0,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 0,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 0,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 0,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_02": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 7,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 7,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 7,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 7,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 9,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 9,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 9,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 9,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_03": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 14,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 14,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 14,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 14,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 18,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 18,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 18,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 18,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_04": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 21,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 21,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 21,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 21,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 27,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 27,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 27,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 27,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_05": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 28,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 28,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 28,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 28,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 36,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 36,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 36,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 36,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_06": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 35,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 35,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 35,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 35,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 45,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 45,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 45,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 45,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_07": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 42,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 42,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 42,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 42,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 54,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 54,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 54,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 54,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_08": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 49,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 49,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 49,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 49,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 63,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 63,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 63,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 63,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_09": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 56,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 56,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 56,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 56,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 72,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 72,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 72,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 72,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_10": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 63,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 63,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 63,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 63,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 81,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 81,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 81,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 81,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_11": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 70,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 70,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 70,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 70,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 90,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 90,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 90,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 90,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_12": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 77,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 77,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 77,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 77,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 99,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 99,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 99,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 99,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_13": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 84,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 84,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 84,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 84,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 108,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 108,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 108,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 108,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_14": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 91,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 91,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 91,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 91,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 117,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 117,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 117,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 117,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_15": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 98,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 98,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 98,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 98,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 126,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 126,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 126,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 126,
+        "width": 20,
+        "height": 9
+      }
+    },
+    "flower_16": {
+      "N": {
+        "sheet": "cardinal",
+        "x": 0,
+        "y": 105,
+        "width": 14,
+        "height": 7
+      },
+      "E": {
+        "sheet": "cardinal",
+        "x": 14,
+        "y": 105,
+        "width": 14,
+        "height": 7
+      },
+      "S": {
+        "sheet": "cardinal",
+        "x": 28,
+        "y": 105,
+        "width": 14,
+        "height": 7
+      },
+      "W": {
+        "sheet": "cardinal",
+        "x": 42,
+        "y": 105,
+        "width": 14,
+        "height": 7
+      },
+      "NE": {
+        "sheet": "diagonal",
+        "x": 0,
+        "y": 135,
+        "width": 20,
+        "height": 9
+      },
+      "SE": {
+        "sheet": "diagonal",
+        "x": 20,
+        "y": 135,
+        "width": 20,
+        "height": 9
+      },
+      "SW": {
+        "sheet": "diagonal",
+        "x": 40,
+        "y": 135,
+        "width": 20,
+        "height": 9
+      },
+      "NW": {
+        "sheet": "diagonal",
+        "x": 60,
+        "y": 135,
+        "width": 20,
+        "height": 9
+      }
+    }
+  }
+}

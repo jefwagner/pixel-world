@@ -14,13 +14,16 @@ Two-stage renderer (`www/demo.js`): one textured unit quad rendered into a
 180×150 scene buffer, cropped to a 160×120 visible window and presented at 4×
 integer scale (nearest). The camera steps through the eight `VIEWS` with `V`,
 snapping each frame to the Ch3 constraint grid; `placeCamera()` returns the
-snapped camera and the sub-pixel crop window. No input/character movement, no
-UV-to-texel transform (step 6a from Ch2 not yet implemented), no instancing.
-Step 2 (the camera contract) is complete; Step 3 is next.
+snapped camera and the sub-pixel crop window. The scene pass selects the
+current view's authored cell, applies the dihedral UV orientation, and samples
+the pre-distorted flower spritesheets 1:1; `T` cycles the 16 variants. No
+input/character movement, view transitions, or instancing yet. Step 3 (1:1
+sampling) is complete; Step 4 is next.
 
 A pixel-exact readback of the internal buffer (`window.snapshot()`) exists as
 the verification tool for every step below; `snapshot({ window: true })`
-fingerprints the visible crop. Recorded baselines are in `todo.md`; each step
+fingerprints the visible crop, and `verifyTile()` compares the rendered cell
+with the authored manifest cell. Recorded baselines are in `todo.md`; each step
 must reproduce the current one before it changes anything.
 
 ## How to read this roadmap
@@ -128,33 +131,46 @@ next evening.
 
 ## Step 3 — 1-to-1 sampling: azimuth-selected textures + UV transforms
 
-**Goal.** Implement Ch2's step 6a: the fragment shader picks the authored texture for
-the current view and applies the UV-to-texel transform — cardinal `(u·14, v·7)`,
-diagonal `(p·(u+v), q·(u−v+1))` — so screen texels map 1:1 to authored texels.
+**Goal.** Implement Ch2's step 6a with the pre-authored flower spritesheets:
+select the atlas cell for the current view and apply the UV-to-texel transform so
+screen texels map 1:1 to authored texels — cardinal `(14u, 7v)`, diagonal
+`(10(u+v), 4.5 + 5(u−v))`.
 
-**Concepts touched.** Pre-distorted textures; why the square-UV sample is wrong;
-texel-center sampling (sampling at pixel centers, i.e., +0.5 offset in texel space);
-binding multiple textures and selecting by uniform.
+**Concepts touched.** Pre-distorted textures; atlas cell selection; why the
+square-UV sample is wrong; the 20×9 rasterised diamond versus the 20×10
+theoretical outline; texel-centre sampling; binding multiple textures and
+selecting by uniform.
 
 **Concrete work.**
-- Create the second texture. A 4-way-symmetric tile needs only two paintings:
-  cardinal (14×7) and diagonal (20×10 diamond). Generate both procedurally at load
-  time with Canvas2D (draw the existing `color-squares.png` content into a 14×7 rect
-  and into a 20×10 diamond mask) — no asset pipeline needed yet.
-- Add a uniform (e.g., `viewKind: f32`, or a small struct with kind + azimuth index)
-  to the scene bind group; add the second texture binding (binding 3).
-- Fragment shader: `if viewKind == diagonal { sample diagonalTex at transform }
-  else { sample cardinalTex at (u*14, v*7) }`.
-- Watch: sampler `addressMode` (clamp, not repeat); `magFilter/minFilter` nearest;
-  the +0.5 texel-center offset so the transform lands on texel centers.
+- Adopt the generator output in `www/assets/flowers/`: `flowers.cardinal.png`
+  (56×112: 4 views × 16 tile rows, 14×7 cells), `flowers.diagonal.png`
+  (80×144: 4 views × 16 tile rows, 20×9 cells), and `flowers.json` (16 tile
+  names × 8 compass views). The format spec lives in
+  `notes/flowers-output-format.md`.
+- Add a pure `www/tiles.mjs`: manifest validation, azimuth→compass view mapping,
+  cell lookup, cell-rect normalisation, and the affine UV→cell transforms.
+  Cardinal: `(14u, 7v)`. Diagonal: `(10(u+v), 4.5 + 5(u−v))` — a 20×9 cell,
+  not the 20×10 theoretical outline; the 4.5 offset centres the rasterised
+  9-row `4,8,12,16,20,16,12,8,4` profile.
+- Compose the view's dihedral square-UV orientation before the cell transform.
+  The camera's UVs rotate with the view, while the cells are pre-rotated; the
+  orientation map keeps the authored cell unrotated on screen.
+- Load both sheets as textures and add a params uniform (affine transform, cell
+  size, normalised atlas rect) to the scene bind group; add the second texture
+  binding. Keep one quad and one tile (`flower_01`).
+- Fragment shader selects the sheet by view kind, maps square UV through the
+  affine transform, then into the atlas cell; nearest/clamp sampling.
+- `V` cycling now selects the compass cell for the current azimuth.
+- `color-squares.png` is retired.
 
-**Verify.** The rendered diamond at phi=45 must be pixel-identical to the authored
-20×10 diagonal texture (compare via the inspect tool, or just eyeball it — with a
-checkerboard pattern you will *see* the diamond's content line up where the old
-square-UV sample smeared it). Cardinal view likewise: 1:1 with the 14×7 texture.
+**Verify.** The rendered cell at every view is pixel-identical to the authored
+cell: cardinal 14×7, diagonal 20×9 with the 9-row profile. Add a browser
+cell-level comparison (rendered RGB hash vs authored cell hash) so the claim is
+falsifiable, then record the new baselines.
 
-**Size verdict: right-sized.** One uniform, one texture, ~20 lines of shader math.
-The only fiddly bit is texel-center sampling.
+**Size verdict: right-sized, maybe 1–1.5 evenings.** The asset plumbing adds a
+manifest loader and a params uniform; the shader math is still small. The fiddly
+bit is the 20×9 diagonal offset, not the cardinal transform.
 
 ---
 

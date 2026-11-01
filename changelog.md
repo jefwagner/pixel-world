@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-01 — Roadmap Step 3: authored tile sampling
+
+- Adopted the flower generator output: 16 variants × 8 compass views, with
+  cardinal 14×7 cells and diagonal 20×9 cells, plus manifest loading and
+  validation in `www/tiles.mjs`.
+- Corrected the diagonal geometry: 20×10 is the theoretical outline; the
+  authored cell is 9 rows, and the transform is `(10(u+v), 4.5+5(u−v))`.
+- Added the per-view dihedral UV orientation (`viewUvOrientation` /
+  `orientedCellTransform`) so the camera's rotating UVs sample the pre-rotated
+  cells unrotated. The rendered cell is pixel-identical to the authored cell.
+- Bound both spritesheets and a scene-params uniform; the shader selects the
+  current view's authored cell. Retired `color-squares.png`. `T` cycles the 16
+  variants.
+- Added `verifyTile()` / `verifyAllTiles()` plus RGB crop/bounds/hash helpers.
+  All 16 tiles × 8 views verify: bbox 20×9 or 14×7, rendered == authored.
+- 109 node tests pass; startup baseline `e1330b15` full / `a42a9c15` window.
+
 ## 2026-10-31 — Roadmap Step 2: the camera contract
 
 - Added the eight-view `VIEWS` table with the exact Ch1 parameters, fixed the

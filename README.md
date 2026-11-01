@@ -15,13 +15,14 @@ quad rendered into a 180×150 internal buffer, cropped to a 160×120 visible
 window and presented at 4× integer scale with nearest-neighbour filtering. The
 camera steps through the eight `VIEWS` with `V`, snapping each frame to the
 Ch3 constraint grid and sliding the crop window by the sub-pixel remainder.
-`window.snapshot()` reads the internal buffer back as a pixel fingerprint for
-verification.
+The scene pass samples the pre-authored flower spritesheets 1:1 for the current
+view; `T` cycles the 16 variants. `window.snapshot()` reads the internal buffer
+back as a pixel fingerprint, and `verifyTile()` compares the rendered cell with
+the authored manifest cell.
 
-Roadmap Step 2 (the camera contract: `VIEWS`, `snapCamera`, the crop-aware
-present pass) is complete. Still missing: input/character movement, the
-UV-to-texel transform, and instancing. Next up is Step 3, authored per-view
-textures and 1-to-1 sampling.
+Roadmap Step 3 (authored per-view textures and 1:1 sampling) is complete. Still
+missing: input/character movement, view transitions, and instancing. Next up is
+Step 4, instancing a tile grid.
 
 `roadmap.md` is the plan; `notes/open-questions.md` holds the unresolved
 design tensions. The design rationale is distilled in the wiki at
@@ -65,13 +66,16 @@ The pure halves of the renderer run under Node's built-in test runner — there 
 no npm project:
 
 ```bash
-node --test www/projection.test.mjs www/snapshotPixels.test.mjs
+node --test www/projection.test.mjs www/snapshotPixels.test.mjs www/tiles.test.mjs
 ```
 
 The GPU half cannot run in Node, so it is verified in the browser instead: open
 the demo and run `(await snapshot()).hash` in the console, then compare it with
 the baseline recorded alongside the change (currently in `todo.md`). That is a
-real pixel diff rather than an eyeball judgement.
+real pixel diff rather than an eyeball judgement. `await verifyTile()` goes
+further: it compares the rendered tile cell with the authored manifest cell for
+the current view. `await verifyAllTiles()` checks all 16 variants at the current
+view.
 
 ## Layout
 
@@ -84,9 +88,11 @@ it is exposed over HTTP.
 | `www/demo.js` | the renderer: device setup, pipelines, per-frame encode, render loop |
 | `www/projection.mjs` | pure projection constants and matrix maths (Node-testable) |
 | `www/snapshotPixels.mjs` | pure pixel helpers for readback and fingerprinting (Node-testable) |
-| `www/projection.test.mjs`, `www/snapshotPixels.test.mjs` | `node --test` suites for the two pure modules |
+| `www/tiles.mjs` | pure manifest, view-cell and UV-to-texel helpers (Node-testable) |
+| `www/projection.test.mjs`, `www/snapshotPixels.test.mjs`, `www/tiles.test.mjs` | `node --test` suites for the pure modules |
 | `www/shader.wgsl` | vertex + fragment shaders |
-| `www/color-squares.png` | the texture the demo samples |
+| `www/assets/flowers/` | authored cardinal/diagonal spritesheets + `flowers.json` manifest |
+| `notes/flowers-output-format.md` | the flower generator's output contract |
 | `roadmap.md` | learning-session roadmap and current state |
 | `todo.md` | session-scoped actionable items (1–4, one commit each) |
 | `backlog.md` | persistent idea parking lot |

@@ -93,3 +93,96 @@ export function summarise(snap) {
     hash: hash(rgba),
   };
 }
+
+/**
+ * Crop a tightly-packed RGBA buffer to a rectangle.
+ *
+ * STUB: filled in during item 3 of roadmap Step 3.
+ *
+ * @param {Uint8Array|Uint8ClampedArray} pixels
+ * @param {number} width
+ * @param {number} height
+ * @param {number} x
+ * @param {number} y
+ * @param {number} w
+ * @param {number} h
+ * @returns {Uint8Array}
+ */
+export function cropRgba(pixels, width, height, x, y, w, h) {
+  if (
+    !Number.isInteger(x) || !Number.isInteger(y) ||
+    !Number.isInteger(w) || !Number.isInteger(h) ||
+    w <= 0 || h <= 0
+  ) {
+    throw new Error('invalid crop rectangle');
+  }
+  if (x < 0 || y < 0 || x + w > width || y + h > height) {
+    throw new Error('crop rectangle is outside the buffer');
+  }
+
+  const rowBytes = w * 4;
+  const out = new Uint8Array(rowBytes * h);
+  for (let row = 0; row < h; row++) {
+    const start = ((y + row) * width + x) * 4;
+    out.set(pixels.subarray(start, start + rowBytes), row * rowBytes);
+  }
+  return out;
+}
+
+/**
+ * Bounding box of non-black RGB pixels, ignoring alpha.
+ *
+ * STUB: filled in during item 3 of roadmap Step 3.
+ *
+ * @param {Uint8Array|Uint8ClampedArray} pixels
+ * @param {number} width
+ * @param {number} height
+ * @returns {{x: number, y: number, width: number, height: number} | null}
+ */
+export function rgbBounds(pixels, width, height) {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      if (pixels[i] !== 0 || pixels[i + 1] !== 0 || pixels[i + 2] !== 0) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (maxX < 0) return null;
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+/**
+ * FNV-1a over RGB only, ignoring alpha.
+ *
+ * STUB: filled in during item 3 of roadmap Step 3.
+ *
+ * @param {Uint8Array|Uint8ClampedArray} pixels
+ * @returns {string}
+ */
+export function hashRgb(pixels) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < pixels.length; i += 4) {
+    h ^= pixels[i];
+    h = Math.imul(h, 0x01000193) >>> 0;
+    h ^= pixels[i + 1];
+    h = Math.imul(h, 0x01000193) >>> 0;
+    h ^= pixels[i + 2];
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}

@@ -1,0 +1,399 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+import {
+  COMPASS_VIEWS,
+  viewNameForAzimuth,
+  validateManifest,
+  sheetFor,
+  tileNames,
+  viewCell,
+  normaliseRect,
+  cellTransform,
+  viewUvOrientation,
+  orientedCellTransform,
+  sceneParams,
+} from "./tiles.mjs";
+
+const AZIMUTHS = [0, 45, 90, 135, 180, 225, 270, 315];
+
+const realManifest = () => JSON.parse(
+  readFileSync(new URL("./assets/flowers/flowers.json", import.meta.url), "utf8"),
+);
+
+// A minimal but structurally complete manifest, cloned per test.
+const makeFixture = () => ({
+  version: 1,
+  spritesheets: [
+    { name: "cardinal", file: "cardinal.png", width: 56, height: 112 },
+    { name: "diagonal", file: "diagonal.png", width: 80, height: 144 },
+  ],
+  tiles: {
+    tile_01: {
+      N:  { sheet: "cardinal", x: 0,  y: 0, width: 14, height: 7 },
+      E:  { sheet: "cardinal", x: 14, y: 0, width: 14, height: 7 },
+      S:  { sheet: "cardinal", x: 28, y: 0, width: 14, height: 7 },
+      W:  { sheet: "cardinal", x: 42, y: 0, width: 14, height: 7 },
+      NE: { sheet: "diagonal", x: 0,  y: 0, width: 20, height: 9 },
+      SE: { sheet: "diagonal", x: 20, y: 0, width: 20, height: 9 },
+      SW: { sheet: "diagonal", x: 40, y: 0, width: 20, height: 9 },
+      NW: { sheet: "diagonal", x: 60, y: 0, width: 20, height: 9 },
+    },
+  },
+});
+
+// --- COMPASS_VIEWS -----------------------------------------------------
+
+test("COMPASS_VIEWS is the eight-point compass in order", () => {
+  assert.deepEqual([...COMPASS_VIEWS], ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]);
+});
+
+// --- viewNameForAzimuth ------------------------------------------------
+
+test("viewNameForAzimuth maps every 45-degree azimuth", () => {
+  assert.deepEqual(
+    AZIMUTHS.map((azimuth) => viewNameForAzimuth(azimuth)),
+    ["N", "NE", "E", "SE", "S", "SW", "W", "NW"],
+  );
+});
+
+test("viewNameForAzimuth normalises out-of-range angles", () => {
+  assert.equal(viewNameForAzimuth(360), "N");
+  assert.equal(viewNameForAzimuth(-45), "NW");
+  assert.equal(viewNameForAzimuth(720), "N");
+});
+
+test("viewNameForAzimuth rejects non-multiples of 45", () => {
+  for (const azimuth of [30, 22.5, NaN]) {
+    assert.throws(() => viewNameForAzimuth(azimuth), /azimuth/);
+  }
+});
+
+// --- viewUvOrientation -------------------------------------------------
+
+test("viewUvOrientation returns the view's square-UV map", () => {
+  const expected = {
+    N:  { m00: -1, m01: 0, m10: 0, m11: 1, offsetX: 1, offsetY: 0 },
+    E:  { m00: 0, m01: 1, m10: 1, m11: 0, offsetX: 0, offsetY: 0 },
+    S:  { m00: 1, m01: 0, m10: 0, m11: -1, offsetX: 0, offsetY: 1 },
+    W:  { m00: 0, m01: -1, m10: -1, m11: 0, offsetX: 1, offsetY: 1 },
+    NE: { m00: 0, m01: 1, m10: -1, m11: 0, offsetX: 0, offsetY: 1 },
+    SE: { m00: 1, m01: 0, m10: 0, m11: 1, offsetX: 0, offsetY: 0 },
+    SW: { m00: 0, m01: -1, m10: 1, m11: 0, offsetX: 1, offsetY: 0 },
+    NW: { m00: -1, m01: 0, m10: 0, m11: -1, offsetX: 1, offsetY: 1 },
+  };
+
+  for (const [viewName, orientation] of Object.entries(expected)) {
+    assert.deepEqual(viewUvOrientation(viewName), orientation, viewName);
+  }
+});
+
+test("viewUvOrientation rejects an unknown view", () => {
+  assert.throws(() => viewUvOrientation("UP"), /unknown view/);
+});
+
+// --- validateManifest --------------------------------------------------
+
+test("validateManifest accepts the fixture and returns it", () => {
+  const manifest = makeFixture();
+  assert.equal(validateManifest(manifest), manifest);
+});
+
+test("the flower manifest validates", () => {
+  const manifest = realManifest();
+  assert.equal(validateManifest(manifest), manifest);
+
+  assert.deepEqual(
+    manifest.spritesheets.map((sheet) => [sheet.name, sheet.width, sheet.height]),
+    [["cardinal", 56, 112], ["diagonal", 80, 144]],
+  );
+
+  const tileNames = Object.keys(manifest.tiles);
+  assert.equal(tileNames.length, 16);
+
+  for (const tileName of tileNames) {
+    const tile = manifest.tiles[tileName];
+    assert.deepEqual([...Object.keys(tile)].sort(), [...COMPASS_VIEWS].sort());
+
+    for (const [viewName, rect] of Object.entries(tile)) {
+      const expected = rect.sheet === "cardinal" ? [14, 7] : [20, 9];
+      assert.deepEqual([rect.width, rect.height], expected, `${tileName}/${viewName}`);
+    }
+  }
+});
+
+test("validateManifest rejects a missing or unsupported version", () => {
+  const missing = makeFixture();
+  delete missing.version;
+  assert.throws(() => validateManifest(missing), /version/);
+
+  const unsupported = makeFixture();
+  unsupported.version = 2;
+  assert.throws(() => validateManifest(unsupported), /version/);
+});
+
+test("validateManifest rejects duplicate sheet names", () => {
+  const manifest = makeFixture();
+  manifest.spritesheets.push({ ...manifest.spritesheets[0] });
+  assert.throws(() => validateManifest(manifest), /duplicate/);
+});
+
+test("validateManifest rejects an unknown sheet reference", () => {
+  const manifest = makeFixture();
+  manifest.tiles.tile_01.N.sheet = "missing";
+  assert.throws(() => validateManifest(manifest), /unknown spritesheet/);
+});
+
+test("validateManifest rejects a tile missing a compass view", () => {
+  const manifest = makeFixture();
+  delete manifest.tiles.tile_01.NW;
+  assert.throws(() => validateManifest(manifest), /missing view NW/);
+});
+
+test("validateManifest rejects cells outside their sheet", () => {
+  const manifest = makeFixture();
+  manifest.tiles.tile_01.N.x = 50; // 50 + 14 > 56
+  assert.throws(() => validateManifest(manifest), /outside sheet/);
+});
+
+test("validateManifest rejects negative or non-integer cells", () => {
+  const negative = makeFixture();
+  negative.tiles.tile_01.N.x = -1;
+  assert.throws(() => validateManifest(negative), /invalid rect/);
+
+  const fractional = makeFixture();
+  fractional.tiles.tile_01.N.y = 0.5;
+  assert.throws(() => validateManifest(fractional), /invalid rect/);
+});
+
+test("validateManifest rejects an empty tile set", () => {
+  const manifest = makeFixture();
+  manifest.tiles = {};
+  assert.throws(() => validateManifest(manifest), /tiles/);
+});
+
+// --- tileNames ---------------------------------------------------------
+
+test("tileNames returns the sorted flower names", () => {
+  const names = tileNames(realManifest());
+  assert.equal(names.length, 16);
+  assert.equal(names[0], "flower_01");
+  assert.equal(names[15], "flower_16");
+  assert.deepEqual(
+    names,
+    Array.from({ length: 16 }, (_, i) => `flower_${String(i + 1).padStart(2, "0")}`),
+  );
+});
+
+test("tileNames returns a fixture's single tile", () => {
+  assert.deepEqual(tileNames(makeFixture()), ["tile_01"]);
+});
+
+test("tileNames throws for an empty tile set", () => {
+  const manifest = makeFixture();
+  manifest.tiles = {};
+  assert.throws(() => tileNames(manifest), /tiles/);
+});
+
+// --- sheetFor ----------------------------------------------------------
+
+test("sheetFor returns the named sheet", () => {
+  const manifest = makeFixture();
+  assert.equal(sheetFor(manifest, "cardinal"), manifest.spritesheets[0]);
+});
+
+test("sheetFor throws for an unknown sheet", () => {
+  assert.throws(() => sheetFor(makeFixture(), "nope"), /unknown spritesheet/);
+});
+
+// --- viewCell ----------------------------------------------------------
+
+test("viewCell selects the compass cell for the azimuth", () => {
+  const manifest = realManifest();
+
+  const north = viewCell(manifest, "flower_01", 0);
+  assert.equal(north.sheet.name, "cardinal");
+  assert.deepEqual(
+    [north.rect.x, north.rect.y, north.rect.width, north.rect.height],
+    [0, 0, 14, 7],
+  );
+
+  const northeast = viewCell(manifest, "flower_01", 45);
+  assert.equal(northeast.sheet.name, "diagonal");
+  assert.deepEqual(
+    [northeast.rect.x, northeast.rect.y, northeast.rect.width, northeast.rect.height],
+    [0, 0, 20, 9],
+  );
+
+  const east = viewCell(manifest, "flower_01", 90);
+  assert.deepEqual(
+    [east.rect.x, east.rect.y, east.rect.width, east.rect.height],
+    [14, 0, 14, 7],
+  );
+
+  const northwest = viewCell(manifest, "flower_01", 315);
+  assert.equal(northwest.sheet.name, "diagonal");
+  assert.deepEqual(
+    [northwest.rect.x, northwest.rect.y, northwest.rect.width, northwest.rect.height],
+    [60, 0, 20, 9],
+  );
+});
+
+test("viewCell covers every tile and azimuth", () => {
+  const manifest = realManifest();
+
+  for (const tileName of Object.keys(manifest.tiles)) {
+    for (const azimuth of AZIMUTHS) {
+      const { sheet, rect } = viewCell(manifest, tileName, azimuth);
+      assert.equal(rect.sheet, sheet.name, `${tileName}/${azimuth}`);
+      assert.ok(rect.x >= 0 && rect.y >= 0, `${tileName}/${azimuth}`);
+      assert.ok(rect.x + rect.width <= sheet.width, `${tileName}/${azimuth} x`);
+      assert.ok(rect.y + rect.height <= sheet.height, `${tileName}/${azimuth} y`);
+    }
+  }
+});
+
+test("viewCell throws for an unknown tile", () => {
+  assert.throws(() => viewCell(realManifest(), "nope", 0), /unknown tile/);
+});
+
+// --- normaliseRect -----------------------------------------------------
+
+test("normaliseRect maps a cell to atlas UV", () => {
+  const cardinal = normaliseRect({ x: 14, y: 7, width: 14, height: 7 }, 56, 112);
+  assert.ok(cardinal instanceof Float32Array);
+  assert.equal(cardinal.length, 4);
+  assert.deepEqual([...cardinal], [0.25, 0.0625, 0.5, 0.125]);
+
+  const diagonal = normaliseRect({ x: 20, y: 9, width: 20, height: 9 }, 80, 144);
+  assert.ok(diagonal instanceof Float32Array);
+  assert.equal(diagonal.length, 4);
+  assert.deepEqual([...diagonal], [0.25, 0.0625, 0.5, 0.125]);
+});
+
+// --- sceneParams -------------------------------------------------------
+
+test("sceneParams packs the cardinal cell", () => {
+  const { sheetName, values } = sceneParams(realManifest(), "flower_01", 0);
+  assert.equal(sheetName, "cardinal");
+  assert.ok(values instanceof Float32Array);
+  assert.equal(values.length, 16);
+  assert.deepEqual([...values.slice(0, 4)], [-14, 0, 0, 7]);
+  assert.deepEqual([...values.slice(4, 8)], [14, 0, 14, 7]);
+  assert.deepEqual([...values.slice(8, 12)], [0, 0, 0.25, 0.0625]);
+  assert.deepEqual([...values.slice(12, 16)], [0, 0, 0, 0]);
+});
+
+test("sceneParams packs the diagonal cell", () => {
+  const { sheetName, values } = sceneParams(realManifest(), "flower_01", 45);
+  assert.equal(sheetName, "diagonal");
+  assert.equal(values.length, 16);
+  assert.deepEqual([...values.slice(0, 4)], [-10, 10, 5, 5]);
+  assert.deepEqual([...values.slice(4, 8)], [10, -0.5, 20, 9]);
+  assert.deepEqual([...values.slice(8, 12)], [0, 0, 0.25, 0.0625]);
+  assert.deepEqual([...values.slice(12, 16)], [1, 0, 0, 0]);
+});
+
+test("sceneParams normalises non-origin cells", () => {
+  const east = sceneParams(realManifest(), "flower_01", 90);
+  assert.deepEqual([...east.values.slice(8, 12)], [0.25, 0, 0.5, 0.0625]);
+
+  const northwest = sceneParams(realManifest(), "flower_01", 315);
+  assert.deepEqual([...northwest.values.slice(8, 12)], [0.75, 0, 1, 0.0625]);
+});
+
+test("sceneParams covers every tile and view", () => {
+  const manifest = realManifest();
+
+  for (const tileName of Object.keys(manifest.tiles)) {
+    for (const azimuth of AZIMUTHS) {
+      const { sheetName, values } = sceneParams(manifest, tileName, azimuth);
+      const { sheet, rect } = viewCell(manifest, tileName, azimuth);
+
+      assert.equal(sheetName, sheet.name, `${tileName}/${azimuth}`);
+      assert.equal(values.length, 16);
+      assert.ok([...values].every(Number.isFinite), `${tileName}/${azimuth} finite`);
+      assert.ok(values[8] >= 0 && values[8] < values[10] && values[10] <= 1);
+      assert.ok(values[9] >= 0 && values[9] < values[11] && values[11] <= 1);
+      assert.equal(values[12], sheet.name === "diagonal" ? 1 : 0);
+    }
+  }
+});
+
+// --- cellTransform -----------------------------------------------------
+
+const applyTransform = (t, u, v) => [
+  t.m00 * u + t.m01 * v + t.offsetX,
+  t.m10 * u + t.m11 * v + t.offsetY,
+];
+
+test("cellTransform returns the cardinal affine map", () => {
+  const t = cellTransform("cardinal");
+  assert.deepEqual(t, {
+    m00: 14, m01: 0, m10: 0, m11: 7,
+    offsetX: 0, offsetY: 0, width: 14, height: 7,
+  });
+  assert.deepEqual(applyTransform(t, 0, 0), [0, 0]);
+  assert.deepEqual(applyTransform(t, 1, 0), [14, 0]);
+  assert.deepEqual(applyTransform(t, 1, 1), [14, 7]);
+  assert.deepEqual(applyTransform(t, 0, 1), [0, 7]);
+  assert.deepEqual(applyTransform(t, 0.5, 0.5), [7, 3.5]);
+});
+
+test("cellTransform returns the diagonal 20x9 affine map", () => {
+  const t = cellTransform("diagonal");
+  assert.deepEqual(t, {
+    m00: 10, m01: 10, m10: 5, m11: -5,
+    offsetX: 0, offsetY: 4.5, width: 20, height: 9,
+  });
+  assert.deepEqual(applyTransform(t, 0, 0), [0, 4.5]);
+  assert.deepEqual(applyTransform(t, 1, 0), [10, 9.5]);
+  assert.deepEqual(applyTransform(t, 1, 1), [20, 4.5]);
+  assert.deepEqual(applyTransform(t, 0, 1), [10, -0.5]);
+  assert.deepEqual(applyTransform(t, 0.5, 0.5), [10, 4.5]);
+});
+
+test("cellTransform rejects an unknown kind", () => {
+  assert.throws(() => cellTransform("isometric"), /unknown view kind/);
+});
+
+// --- orientedCellTransform ---------------------------------------------
+
+test("orientedCellTransform composes the cardinal orientations", () => {
+  const expected = {
+    N: { m00: -14, m01: 0, m10: 0, m11: 7, offsetX: 14, offsetY: 0, width: 14, height: 7 },
+    E: { m00: 0, m01: 14, m10: 7, m11: 0, offsetX: 0, offsetY: 0, width: 14, height: 7 },
+    S: { m00: 14, m01: 0, m10: 0, m11: -7, offsetX: 0, offsetY: 7, width: 14, height: 7 },
+    W: { m00: 0, m01: -14, m10: -7, m11: 0, offsetX: 14, offsetY: 7, width: 14, height: 7 },
+  };
+
+  for (const [viewName, transform] of Object.entries(expected)) {
+    assert.deepEqual(orientedCellTransform("cardinal", viewName), transform, viewName);
+  }
+});
+
+test("orientedCellTransform composes the diagonal orientations", () => {
+  const expected = {
+    NE: { m00: -10, m01: 10, m10: 5, m11: 5, offsetX: 10, offsetY: -0.5, width: 20, height: 9 },
+    SE: { m00: 10, m01: 10, m10: 5, m11: -5, offsetX: 0, offsetY: 4.5, width: 20, height: 9 },
+    SW: { m00: 10, m01: -10, m10: -5, m11: -5, offsetX: 10, offsetY: 9.5, width: 20, height: 9 },
+    NW: { m00: -10, m01: -10, m10: -5, m11: 5, offsetX: 20, offsetY: 4.5, width: 20, height: 9 },
+  };
+
+  for (const [viewName, transform] of Object.entries(expected)) {
+    assert.deepEqual(orientedCellTransform("diagonal", viewName), transform, viewName);
+  }
+});
+
+test("orientedCellTransform preserves the cell centre", () => {
+  for (const viewName of COMPASS_VIEWS) {
+    const kind = viewName.length === 1 ? "cardinal" : "diagonal";
+    const t = orientedCellTransform(kind, viewName);
+    assert.deepEqual(
+      applyTransform(t, 0.5, 0.5),
+      [t.width / 2, t.height / 2],
+      viewName,
+    );
+  }
+});
