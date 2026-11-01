@@ -125,7 +125,7 @@ instancing are Step 4.
 
   Startup snapshots remain `e1330b15` (buffer) / `a42a9c15` (window).
 
-- [ ] **4. Cycle the 16 flower variants and confirm orientation**
+- [x] **4. Cycle the 16 flower variants and confirm orientation**
 
   Exercise the whole manifest with one quad, and settle the azimuth→compass
   convention.
@@ -140,6 +140,29 @@ instancing are Step 4.
 
   **Acceptance:** all 16 flowers render; `verifyTile()` passes for each at the
   diagonal view; `V` still cycles views; no grid or instancing is introduced.
+
+  **Verified (browser, hard reload, azimuth 45):** all 16 variants `ok`, bbox
+  20×9, rendered == authored. The user also cycled all 8 views for every tile
+  (128 combinations) without errors.
+
+  | tile | hash |
+  |---|---|
+  | flower_01 | `20b5d441` |
+  | flower_02 | `fad49a54` |
+  | flower_03 | `ef008698` |
+  | flower_04 | `53806415` |
+  | flower_05 | `9017e6b8` |
+  | flower_06 | `6e6c4597` |
+  | flower_07 | `dfa0f225` |
+  | flower_08 | `1f60936b` |
+  | flower_09 | `18fbb6f0` |
+  | flower_10 | `125fdf1c` |
+  | flower_11 | `ac2f35d7` |
+  | flower_12 | `ff192615` |
+  | flower_13 | `528b528d` |
+  | flower_14 | `60e84514` |
+  | flower_15 | `1bf2c241` |
+  | flower_16 | `8cde59a5` |
 
 ## Findings / decisions
 

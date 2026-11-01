@@ -192,6 +192,22 @@ export function validateManifest(manifest) {
 }
 
 /**
+ * Sorted tile names from a validated manifest.
+ *
+ * STUB: filled in during item 4 of roadmap Step 3.
+ *
+ * @param {object} manifest
+ * @returns {string[]}
+ */
+export function tileNames(manifest) {
+  const names = Object.keys(manifest?.tiles ?? {});
+  if (names.length === 0) {
+    throw new Error('manifest has no tiles');
+  }
+  return names.sort();
+}
+
+/**
  * Look up a spritesheet by name.
  *
  * @param {object} manifest

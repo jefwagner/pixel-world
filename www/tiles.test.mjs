@@ -7,6 +7,7 @@ import {
   viewNameForAzimuth,
   validateManifest,
   sheetFor,
+  tileNames,
   viewCell,
   normaliseRect,
   cellTransform,
@@ -170,6 +171,29 @@ test("validateManifest rejects an empty tile set", () => {
   const manifest = makeFixture();
   manifest.tiles = {};
   assert.throws(() => validateManifest(manifest), /tiles/);
+});
+
+// --- tileNames ---------------------------------------------------------
+
+test("tileNames returns the sorted flower names", () => {
+  const names = tileNames(realManifest());
+  assert.equal(names.length, 16);
+  assert.equal(names[0], "flower_01");
+  assert.equal(names[15], "flower_16");
+  assert.deepEqual(
+    names,
+    Array.from({ length: 16 }, (_, i) => `flower_${String(i + 1).padStart(2, "0")}`),
+  );
+});
+
+test("tileNames returns a fixture's single tile", () => {
+  assert.deepEqual(tileNames(makeFixture()), ["tile_01"]);
+});
+
+test("tileNames throws for an empty tile set", () => {
+  const manifest = makeFixture();
+  manifest.tiles = {};
+  assert.throws(() => tileNames(manifest), /tiles/);
 });
 
 // --- sheetFor ----------------------------------------------------------

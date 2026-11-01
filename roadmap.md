@@ -14,13 +14,16 @@ Two-stage renderer (`www/demo.js`): one textured unit quad rendered into a
 180×150 scene buffer, cropped to a 160×120 visible window and presented at 4×
 integer scale (nearest). The camera steps through the eight `VIEWS` with `V`,
 snapping each frame to the Ch3 constraint grid; `placeCamera()` returns the
-snapped camera and the sub-pixel crop window. No input/character movement, no
-UV-to-texel transform (step 6a from Ch2 not yet implemented), no instancing.
-Step 2 (the camera contract) is complete; Step 3 is next.
+snapped camera and the sub-pixel crop window. The scene pass selects the
+current view's authored cell, applies the dihedral UV orientation, and samples
+the pre-distorted flower spritesheets 1:1; `T` cycles the 16 variants. No
+input/character movement, view transitions, or instancing yet. Step 3 (1:1
+sampling) is complete; Step 4 is next.
 
 A pixel-exact readback of the internal buffer (`window.snapshot()`) exists as
 the verification tool for every step below; `snapshot({ window: true })`
-fingerprints the visible crop. Recorded baselines are in `todo.md`; each step
+fingerprints the visible crop, and `verifyTile()` compares the rendered cell
+with the authored manifest cell. Recorded baselines are in `todo.md`; each step
 must reproduce the current one before it changes anything.
 
 ## How to read this roadmap

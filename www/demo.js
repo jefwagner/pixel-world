@@ -40,6 +40,7 @@ import {
 import {
   sceneParams,
   sheetFor,
+  tileNames,
   validateManifest,
   viewCell,
   viewNameForAzimuth,
@@ -59,7 +60,8 @@ const state = {
   present: null,
   manifest: null,
   sheets: null,
-  tileName: 'flower_01',
+  tileNames: null,
+  tileIndex: 0,
 
   // Continuous camera target in world space. The camera itself is snapped
   // each frame; this target stays continuous so the crop absorbs the
@@ -168,7 +170,8 @@ async function verifyTile() {
 
   const view = VIEWS[state.viewIndex];
   const viewName = viewNameForAzimuth(view.azimuth);
-  const { sheet, rect } = viewCell(state.manifest, state.tileName, view.azimuth);
+  const tileName = state.tileNames[state.tileIndex];
+  const { sheet, rect } = viewCell(state.manifest, tileName, view.azimuth);
 
   const snap = await snapshotBuffer(
     state.device, state.sceneTexture, BUFFER_WIDTH, BUFFER_HEIGHT, state.format,
@@ -180,12 +183,12 @@ async function verifyTile() {
     const failed = {
       ok: false,
       viewName,
-      tileName: state.tileName,
+      tileName,
       bounds: null,
       renderedHash: null,
       authoredHash: null,
     };
-    console.error(`[verifyTile] FAIL view=${viewName} tile=${state.tileName}: empty render`);
+    console.error(`[verifyTile] FAIL view=${viewName} tile=${tileName}: empty render`);
     return failed;
   }
 
@@ -215,20 +218,32 @@ async function verifyTile() {
   const result = {
     ok,
     viewName,
-    tileName: state.tileName,
+    tileName,
     bounds,
     rect: { ...rect },
     renderedHash,
     authoredHash,
   };
   console.log(
-    `[verifyTile] ${ok ? 'ok' : 'FAIL'} view=${viewName} tile=${state.tileName} ` +
+    `[verifyTile] ${ok ? 'ok' : 'FAIL'} view=${viewName} tile=${tileName} ` +
     `bbox=${bounds.width}x${bounds.height} ` +
     `rendered=${renderedHash} authored=${authoredHash}`,
   );
   return result;
 }
 window.verifyTile = verifyTile;
+
+// Verify every flower variant at the current view. Leaves the last tile
+// selected; the results carry each tile's name and hashes.
+async function verifyAllTiles() {
+  const results = [];
+  for (let i = 0; i < state.tileNames.length; i++) {
+    state.tileIndex = i;
+    results.push(await verifyTile());
+  }
+  return results;
+}
+window.verifyAllTiles = verifyAllTiles;
 
 // Get a handle to the gpu adaptor and device
 // - early exit with error message is missing
@@ -578,7 +593,7 @@ function renderFrame() {
   const cameraMatrix = createCamera(state.cameraView);
   state.device.queue.writeBuffer(state.scene.cameraBuffer, 0, cameraMatrix);
   state.device.queue.writeBuffer(state.scene.paramsBuffer, 0, sceneParams(
-    state.manifest, state.tileName, view.azimuth,
+    state.manifest, state.tileNames[state.tileIndex], view.azimuth,
   ).values);
   state.device.queue.writeBuffer(state.present.windowBuffer, 0, placed.windowRect);
 
@@ -631,16 +646,26 @@ function startRenderLoop() {
   });
 }
 
-// Debug controls. V cycles the eight views. Arrows nudge the continuous view
-// target (Shift = quarter step), so the camera snaps at cell boundaries while
-// the crop window slides continuously.
+// Debug controls. V cycles the eight views; T cycles the flower variants.
+// Arrows nudge the continuous view target (Shift = quarter step), so the camera
+// snaps at cell boundaries while the crop window slides continuously.
 function installViewDebugKeys() {
   window.addEventListener('keydown', (event) => {
-    if (event.key.toLowerCase() === 'v') {
+    const key = event.key.toLowerCase();
+
+    if (key === 'v') {
       state.viewIndex = (state.viewIndex + 1) % VIEWS.length;
       const view = VIEWS[state.viewIndex];
       console.log(
         `[view] index=${state.viewIndex} azimuth=${view.azimuth} kind=${view.kind}`,
+      );
+      return;
+    }
+
+    if (key === 't') {
+      state.tileIndex = (state.tileIndex + 1) % state.tileNames.length;
+      console.log(
+        `[tile] index=${state.tileIndex} name=${state.tileNames[state.tileIndex]}`,
       );
       return;
     }
@@ -689,6 +714,7 @@ async function init() {
     cardinal: assets.cardinalBitmap,
     diagonal: assets.diagonalBitmap,
   };
+  state.tileNames = tileNames(state.manifest);
 
   state.sceneTexture = createSceneTexture(state.device, state.format);
   state.sceneTextureView = state.sceneTexture.createView();
