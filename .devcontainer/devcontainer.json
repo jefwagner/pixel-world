@@ -29,12 +29,6 @@
     "--security-opt=no-new-privileges:true"
   ],
 
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {
-      "installDockerCompose": true
-    }
-  },
-
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/vscode/.cargo/bin:/workspace/node_modules/.bin",
     "SHELL": "/bin/bash",
